@@ -1,6 +1,3 @@
-# 参考：https://zhuanlan.zhihu.com/p/1674261485
-
-
 # 构造一个简单的文本生成模型
 # 在构造LlaMa之前，我们先构造一个简单的seq2seq模型，然后逐步对原本的Seq2seq模型，增加LlaMa中的算子RMS、Rope、SwiGLU，直到完整构造LlaMa。
 

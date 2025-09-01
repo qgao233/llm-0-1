@@ -1,0 +1,19 @@
+# 使用Python最新版本作为基础镜像
+FROM docker.1ms.run/python:3.9.23-trixie
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制requirements.txt文件到容器中
+COPY requirements.txt .
+
+# 安装Python依赖
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 源代码将在运行时通过卷映射挂载
+
+# 暴露端口（如果需要的话）
+EXPOSE 8000
+
+# 运行主程序
+# CMD ["python", "index.py"]
