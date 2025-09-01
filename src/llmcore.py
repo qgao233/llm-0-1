@@ -31,7 +31,7 @@ def get_default_config(force_cpu=False):
         'context_window': 16, # 滑动窗口采样，设置采样大小
         'vocab_size': 4325, # 咱们的西游记数据集，一共包含4325个不重复的汉字，标点符号
         'd_model': 128, #模型为128维的embedding
-        'epochs': 1000, # 训练轮次
+        'epochs': 100, # 训练轮次
         'log_interval': 10, # 每10个batch打印一次log
         'n_heads': 8, # 32个注意力机制头，我们来8个吧
         'n_layers': 4, # 根据传入的堆叠层数，创建Llama功能块，注意OrderedDict为一种特殊类型的字典数据，保留字典写入的顺序，先插入的数据在前，后插入的数据在后。
@@ -368,7 +368,7 @@ class RoPEMaskedMultiheadAttention(nn.Module):
         # 输入矩阵形状x： (batch, sequence length, dimension)
 
         # 每一个注意力机制头，都传入X进行计算。（这个地方开启并行执行会不会快一些，但是不知道pytorch是不是自动调用并行）
-        heads = [h(x,True) for h in self.heads]
+        heads = [h(x) for h in self.heads]  # 不返回注意力权重，只返回激活值
         # 输入张量x经过多个头计算attention（同时，attention是已经覆盖了RoPE的），重新拼接成新的矩阵，重新放入变量x。到这里你应该觉得：那矩阵形状不就变了吗
         x = torch.cat(heads, dim=-1)
 
