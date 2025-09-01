@@ -17,6 +17,14 @@ model = env['model']
 dataset = env['dataset']
 config = env['config']
 
+# 显示设备信息
+device = config['device']
+print(f"当前使用的计算设备: {device}")
+if device.type == 'cuda':
+    print(f"CUDA版本: {torch.version.cuda}")
+    print(f"cuDNN版本: {torch.backends.cudnn.version()}")
+    print(f"GPU内存状态: {torch.cuda.memory_allocated(device) / 1024**2:.1f} MB 已使用 / {torch.cuda.memory_reserved(device) / 1024**2:.1f} MB 已预留")
+
 # 创建优化器和调度器
 optimizer = create_optimizer(model)
 scheduler = create_scheduler(optimizer)
@@ -47,3 +55,8 @@ scheduler_save_path = f"{model_save_dir}/scheduler.pt"
 torch.save(scheduler.state_dict(), scheduler_save_path)
 
 print("训练完成，模型已保存到", model_save_dir)
+
+# 显示最终GPU内存使用情况
+if device.type == 'cuda':
+    print(f"训练完成后GPU内存状态: {torch.cuda.memory_allocated(device) / 1024**2:.1f} MB 已使用 / {torch.cuda.memory_reserved(device) / 1024**2:.1f} MB 已预留")
+    print(f"最大GPU内存使用: {torch.cuda.max_memory_allocated(device) / 1024**2:.1f} MB")

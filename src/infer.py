@@ -1,7 +1,8 @@
 from llmcore import (
     create_model, 
     generate, 
-    download_and_prepare_data
+    download_and_prepare_data,
+    get_device
 )
 import torch
 import json
@@ -12,7 +13,19 @@ config_path = "./model_save/config.json"
 with open(config_path, 'r') as f:
     config = json.load(f)
 
+# 确保使用正确的设备
+if 'device' not in config:
+    config['device'] = get_device()
+else:
+    # 如果配置文件中的设备不可用，重新检测
+    if config['device'] == 'cuda' and not torch.cuda.is_available():
+        print("警告: 配置文件指定使用CUDA，但CUDA不可用，改用CPU")
+        config['device'] = torch.device('cpu')
+    elif isinstance(config['device'], str):
+        config['device'] = torch.device(config['device'])
+
 print("加载模型配置:", config)
+print(f"推理设备: {config['device']}")
 
 # 创建模型
 model = create_model(config)
@@ -20,10 +33,17 @@ model = create_model(config)
 # 加载模型权重
 model_save_path = "./model_save/pytorch_model.bin"
 print("加载模型权重...")
-model.load_state_dict(torch.load(model_save_path))
+# 根据当前设备加载模型权重
+device = config['device']
+if device.type == 'cuda':
+    model.load_state_dict(torch.load(model_save_path))
+else:
+    # 如果当前使用CPU但模型是在GPU上训练的，需要映射到CPU
+    model.load_state_dict(torch.load(model_save_path, map_location='cpu'))
 
 # 设置为评估模式
 model.eval()
+print(f"模型已加载到设备: {device}")
 
 # 准备数据（主要是为了获取词表）
 print("准备词表...")

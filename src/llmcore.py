@@ -9,8 +9,23 @@ import urllib.request
 import os
 from collections import OrderedDict
 
-def get_default_config():
+def get_device(force_cpu=False):
+    """检测并返回可用的设备"""
+    if force_cpu:
+        device = torch.device("cpu")
+        print("强制使用CPU进行计算")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"使用GPU: {torch.cuda.get_device_name()}")
+        print(f"GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    else:
+        device = torch.device("cpu")
+        print("CUDA不可用，使用CPU进行计算")
+    return device
+
+def get_default_config(force_cpu=False):
     """获取默认配置"""
+    device = get_device(force_cpu=force_cpu)
     return {
         'batch_size': 32, # 一次batch会有多少个随机点
         'context_window': 16, # 滑动窗口采样，设置采样大小
@@ -21,6 +36,7 @@ def get_default_config():
         'n_heads': 8, # 32个注意力机制头，我们来8个吧
         'n_layers': 4, # 根据传入的堆叠层数，创建Llama功能块，注意OrderedDict为一种特殊类型的字典数据，保留字典写入的顺序，先插入的数据在前，后插入的数据在后。
         # 这里，我们将llama的功能块堆叠4层
+        'device': device, # 计算设备
     }
 
 def download_and_prepare_data(data_file="xiyouji.txt", force_download=False):
@@ -58,7 +74,7 @@ def decode_text(indices, itos):
     return ''.join([itos[i] for i in indices])
 
 # 构建batch
-def get_batches(data, split, batch_size, context_window):
+def get_batches(data, split, batch_size, context_window, device=None):
     # 切分训练集，验证集，测试集，比例为，训练80%，验证10%，测试10%
     train = data[:int(0.8 * len(data))]
     val = data[int(0.8 * len(data)): int(0.9 * len(data))]
@@ -87,6 +103,11 @@ def get_batches(data, split, batch_size, context_window):
     x = torch.stack([batch_data[i:i+context_window] for i in ix]).long()
     y = torch.stack([batch_data[i+1:i+context_window+1] for i in ix]).long()
 
+    # 如果指定了设备，将数据移动到对应设备上
+    if device is not None:
+        x = x.to(device)
+        y = y.to(device)
+
     # 返回特征值，目标值
     return x, y
 
@@ -109,7 +130,7 @@ def evaluate_loss(model, dataset, config):
         # 评估10个batch
         for _ in range(10):
             # 拿到特征值（输入数据），以及目标值（输出数据）
-            xb, yb = get_batches(dataset, split, config['batch_size'], config['context_window'])
+            xb, yb = get_batches(dataset, split, config['batch_size'], config['context_window'], config.get('device'))
 
             # 把拿到的数据丢进模型，得到loss值
             _, loss = model(xb, yb)
@@ -146,7 +167,7 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
         optimizer.zero_grad()
 
         # 获取训练数据
-        xs, ys = get_batches(dataset, 'train', config['batch_size'], config['context_window'])
+        xs, ys = get_batches(dataset, 'train', config['batch_size'], config['context_window'], config.get('device'))
 
         # 前向传播计算概率矩阵与loss
         logits, loss = model(xs, targets=ys)
@@ -193,7 +214,8 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
 # 推理函数
 def generate(model, itos, config, max_new_tokens=20):
     # 生成随机数，作为输入数据,5行一列，代表输入5个字符。 这个地方可以自行替换其他随机数测试。
-    idx = torch.randint(1, 4000, (5, 1)).long()
+    device = config.get('device', torch.device('cpu'))
+    idx = torch.randint(1, 4000, (5, 1)).long().to(device)
     print("随机生成的字符:", [itos[i.item()] for i in idx])
     print(idx[:, -config['context_window']:])
     for _ in range(max_new_tokens):
@@ -501,7 +523,12 @@ def create_model(config=None):
     """创建模型实例"""
     if config is None:
         config = get_default_config()
-    return Llama(config)
+    model = Llama(config)
+    # 将模型移动到指定设备
+    if 'device' in config:
+        model = model.to(config['device'])
+        print(f"模型已移动到设备: {config['device']}")
+    return model
 
 def create_optimizer(model, lr=1e-3, betas=(0.9, 0.95), weight_decay=0.1, eps=1e-9):
     """创建优化器"""
@@ -529,6 +556,11 @@ def initialize_training_environment(data_file="xiyouji.txt", config=None):
     
     # 更新配置中的词表大小
     config['vocab_size'] = len(vocab)
+    
+    # 如果使用GPU，将数据集也移动到GPU（可选，数据集通常保留在CPU上，在训练时动态移动batch）
+    device = config.get('device', torch.device('cpu'))
+    if device.type == 'cuda':
+        print(f"数据集将在训练时动态移动到GPU")
     
     # 创建模型
     model = create_model(config)
