@@ -14,15 +14,23 @@ with open(config_path, 'r') as f:
     config = json.load(f)
 
 # 确保使用正确的设备
-if 'device' not in config:
+if 'device' not in config and 'device_type' not in config:
     config['device'] = get_device()
 else:
-    # 如果配置文件中的设备不可用，重新检测
-    if config['device'] == 'cuda' and not torch.cuda.is_available():
-        print("警告: 配置文件指定使用CUDA，但CUDA不可用，改用CPU")
-        config['device'] = torch.device('cpu')
-    elif isinstance(config['device'], str):
-        config['device'] = torch.device(config['device'])
+    # 从device_type重建device对象
+    if 'device_type' in config:
+        device_str = config['device_type']
+        if 'cuda' in device_str and torch.cuda.is_available():
+            config['device'] = torch.device('cuda')
+        else:
+            config['device'] = torch.device('cpu')
+    elif 'device' in config:
+        # 兼容旧版本配置
+        if config['device'] == 'cuda' and not torch.cuda.is_available():
+            print("警告: 配置文件指定使用CUDA，但CUDA不可用，改用CPU")
+            config['device'] = torch.device('cpu')
+        elif isinstance(config['device'], str):
+            config['device'] = torch.device(config['device'])
 
 print("加载模型配置:", config)
 print(f"推理设备: {config['device']}")

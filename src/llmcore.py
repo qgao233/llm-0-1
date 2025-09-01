@@ -368,7 +368,7 @@ class RoPEMaskedMultiheadAttention(nn.Module):
         # 输入矩阵形状x： (batch, sequence length, dimension)
 
         # 每一个注意力机制头，都传入X进行计算。（这个地方开启并行执行会不会快一些，但是不知道pytorch是不是自动调用并行）
-        heads = [h(x) for h in self.heads]
+        heads = [h(x,True) for h in self.heads]
         # 输入张量x经过多个头计算attention（同时，attention是已经覆盖了RoPE的），重新拼接成新的矩阵，重新放入变量x。到这里你应该觉得：那矩阵形状不就变了吗
         x = torch.cat(heads, dim=-1)
 

@@ -42,10 +42,12 @@ print("保存模型...")
 model_save_path = f"{model_save_dir}/pytorch_model.bin"
 torch.save(model.state_dict(), model_save_path)
 
-# 生成一个config文件
+# 生成一个config文件（移除不可序列化的device对象）
 config_save_path = f"{model_save_dir}/config.json"
+config_serializable = {k: v for k, v in config.items() if k != 'device'}
+config_serializable['device_type'] = str(config['device'])  # 保存设备类型的字符串表示
 with open(config_save_path, 'w') as f:
-    json.dump(config, f)
+    json.dump(config_serializable, f, indent=2)
 
 # 保存optimizer和学习率调度器的状态，方便继续微调
 optimizer_save_path = f"{model_save_dir}/optimizer.pt"
