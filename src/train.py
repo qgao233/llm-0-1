@@ -9,6 +9,17 @@ import torch
 import json
 import os
 
+# 强制PyTorch使用更多GPU内存
+if torch.cuda.is_available():
+    print("正在配置GPU内存管理...")
+    # 清空GPU缓存
+    torch.cuda.empty_cache()
+    # 设置使用95%的GPU内存
+    torch.cuda.set_per_process_memory_fraction(0.95)
+    # 启用内存分配器
+    torch.cuda.memory.set_per_process_memory_fraction(0.95)
+    print("GPU内存管理配置完成")
+
 # 初始化训练环境
 print("正在初始化训练环境...")
 env = initialize_training_environment()
@@ -23,7 +34,21 @@ print(f"当前使用的计算设备: {device}")
 if device.type == 'cuda':
     print(f"CUDA版本: {torch.version.cuda}")
     print(f"cuDNN版本: {torch.backends.cudnn.version()}")
-    print(f"GPU内存状态: {torch.cuda.memory_allocated(device) / 1024**2:.1f} MB 已使用 / {torch.cuda.memory_reserved(device) / 1024**2:.1f} MB 已预留")
+    
+    # 显示详细的GPU内存信息
+    def print_gpu_memory_info():
+        allocated = torch.cuda.memory_allocated(device) / 1024**3
+        reserved = torch.cuda.memory_reserved(device) / 1024**3
+        total = torch.cuda.get_device_properties(device).total_memory / 1024**3
+        free = total - reserved
+        print(f"GPU内存状态:")
+        print(f"  已分配: {allocated:.3f} GB")
+        print(f"  已预留: {reserved:.3f} GB") 
+        print(f"  可用: {free:.3f} GB")
+        print(f"  总计: {total:.3f} GB")
+        print(f"  使用率: {reserved/total*100:.1f}%")
+    
+    print_gpu_memory_info()
 
 # 创建优化器和调度器
 optimizer = create_optimizer(model)
@@ -60,5 +85,14 @@ print("训练完成，模型已保存到", model_save_dir)
 
 # 显示最终GPU内存使用情况
 if device.type == 'cuda':
-    print(f"训练完成后GPU内存状态: {torch.cuda.memory_allocated(device) / 1024**2:.1f} MB 已使用 / {torch.cuda.memory_reserved(device) / 1024**2:.1f} MB 已预留")
-    print(f"最大GPU内存使用: {torch.cuda.max_memory_allocated(device) / 1024**2:.1f} MB")
+    print("\n=== 训练完成后的GPU内存状态 ===")
+    final_allocated = torch.cuda.memory_allocated(device) / 1024**3
+    final_reserved = torch.cuda.memory_reserved(device) / 1024**3
+    max_allocated = torch.cuda.max_memory_allocated(device) / 1024**3
+    total = torch.cuda.get_device_properties(device).total_memory / 1024**3
+    
+    print(f"最终已分配内存: {final_allocated:.3f} GB")
+    print(f"最终已预留内存: {final_reserved:.3f} GB")
+    print(f"最大已分配内存: {max_allocated:.3f} GB")
+    print(f"GPU总内存: {total:.3f} GB")
+    print(f"峰值使用率: {max_allocated/total*100:.1f}%")

@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 echo "强制使用GPU模式运行Docker容器..."
 echo "将src目录映射到容器的/app目录"

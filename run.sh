@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 echo "运行Docker容器..."
 echo "将src目录映射到容器的/app目录"

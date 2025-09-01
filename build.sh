@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 echo "开始构建Docker镜像..."
 echo "使用Dockerfile.llm构建镜像"

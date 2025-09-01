@@ -261,9 +261,9 @@ class RMSNorm(nn.Module):
         # print(self.scale[:x.shape[1], :].unsqueeze(0) * raw)
         return self.scale[:x.shape[1], :].unsqueeze(0) * raw
 
-def get_rotary_matrix(context_window, embedding_dim):
+def get_rotary_matrix(context_window, embedding_dim, device=None):
     # 初始化一个0填充，形状为（context_window, embedding_dim, embedding_dim）的张量矩阵，其中context_window为token数量，后面两个embedding_dim组成正方形矩阵，与后面的attention计算对齐格式
-    R = torch.zeros((context_window, embedding_dim, embedding_dim), requires_grad=False)
+    R = torch.zeros((context_window, embedding_dim, embedding_dim), requires_grad=False, device=device)
 
     # 遍历每一个位置的token
     for position in range(context_window):
@@ -292,7 +292,9 @@ class RoPEMaskedAttentionHead(nn.Module):
         # 计算V权重矩阵
         self.w_v = nn.Linear(config['d_model'], config['d_model'], bias=False)
         # 获得旋转位置编码矩阵，接下来会覆盖Q和K权重矩阵
-        self.R = get_rotary_matrix(config['context_window'], config['d_model'])
+        # 注意：这里先不创建R，等到forward时根据输入张量的设备来创建
+        self.context_window = config['context_window']
+        self.embedding_dim = config['d_model']
 
 
     # 这里将上一个代码块中实现的创建旋转位置编码的功能函数原封不动的拿过来
@@ -325,11 +327,14 @@ class RoPEMaskedAttentionHead(nn.Module):
         k = self.w_k(x)
         v = self.w_v(x)
 
+        # 动态创建旋转位置编码矩阵，确保与输入张量在同一设备上
+        R = get_rotary_matrix(self.context_window, self.embedding_dim, device=x.device)
+        
         # 将旋转位置编码应用于Q和K，其中torch.bmm为矩阵做外积，transpose是转置，对Q矩阵转置，并与旋转位置编码做外积，再转置回原状，Q便应用了旋转位置编码。
         # 考虑到输入文本的长度，因此对位置编码矩阵在第一维度做截断，因为长了也没用，与文本长度一样。
-        q_rotated = (torch.bmm(q.transpose(0, 1), self.R[:m])).transpose(0, 1)
+        q_rotated = (torch.bmm(q.transpose(0, 1), R[:m])).transpose(0, 1)
         # 同理对K也应用旋转位置编码进行覆盖
-        k_rotated = (torch.bmm(k.transpose(0, 1), self.R[:m])).transpose(0, 1)
+        k_rotated = (torch.bmm(k.transpose(0, 1), R[:m])).transpose(0, 1)
 
         # 对注意力机制点积进行等比例缩放，防止attention张量过长引发梯度爆炸，对应
         activations = F.scaled_dot_product_attention(
@@ -523,6 +528,17 @@ def create_model(config=None):
     """创建模型实例"""
     if config is None:
         config = get_default_config()
+    
+    # 如果使用GPU，预分配内存
+    if config.get('device', torch.device('cpu')).type == 'cuda':
+        print("预分配GPU内存...")
+        # 创建一个大的临时张量来预分配内存
+        temp_tensor = torch.randn(1000, 1000, device=config['device'])
+        del temp_tensor
+        torch.cuda.empty_cache()
+        print("GPU内存预分配完成")
+    
+    
     model = Llama(config)
     # 将模型移动到指定设备
     if 'device' in config:
