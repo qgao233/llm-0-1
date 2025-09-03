@@ -31,7 +31,7 @@ def get_default_config(force_cpu=False):
         'context_window': 16, # 滑动窗口采样，设置采样大小
         'vocab_size': 4325, # 咱们的西游记数据集，一共包含4325个不重复的汉字，标点符号
         'd_model': 128, #模型为128维的embedding
-        'epochs': 10000, # 训练轮次
+        'epochs': 5000, # 训练轮次 - 减少到5000轮，配合早停机制
         'log_interval': 10, # 每10个batch打印一次log
         'n_heads': 8, # 32个注意力机制头，我们来8个吧
         'n_layers': 4, # 根据传入的堆叠层数，创建Llama功能块，注意OrderedDict为一种特殊类型的字典数据，保留字典写入的顺序，先插入的数据在前，后插入的数据在后。
@@ -157,6 +157,9 @@ def evaluate_loss(model, dataset, config):
 def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
     # loss存储
     losses = []
+    best_val_loss = float('inf')
+    patience_counter = 0
+    max_patience = 50  # 早停耐心值
 
     # 训练时间记录开始时间
     start_time = time.time()
@@ -174,10 +177,15 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
 
         # 反向传播更新权重参数，更新学习率优化器
         loss.backward()
+        
+        # 梯度裁剪，防止梯度爆炸
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
 
-        # 如果提供学习率调度器，那么学习率会通过调度器进行修改，比如学习率周期性变化，或者梯度减小，增加，具体策略需要综合考虑进行设置，详情自行查询，关键字：lr_scheduler
+        # 如果提供学习率调度器，那么学习率会通过调度器进行修改
         if scheduler:
+            # 每个batch都更新学习率
             scheduler.step()
 
         # 打印log
@@ -190,20 +198,39 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
 
             # Store the validation loss
             losses += [x]
+            
+            # 获取当前学习率
+            current_lr = optimizer.param_groups[0]['lr']
 
             # 打印进度日志
             if print_logs:
-                print(f"Epoch {epoch} | val loss {x['val']:.3f} | Time {batch_time:.3f} | ETA in seconds {batch_time * (config['epochs'] - epoch)/config['log_interval'] :.3f}")
+                print(f"Epoch {epoch:5d} | train loss {x['train']:.4f} | val loss {x['val']:.4f} | lr {current_lr:.2e} | Time {batch_time:.2f}s | ETA {batch_time * (config['epochs'] - epoch)/config['log_interval']:.1f}s")
+
+            # 将验证loss传递给调度器进行自适应调整
+            if scheduler and hasattr(scheduler, 'step'):
+                # 对于自定义调度器，传递验证loss
+                if hasattr(scheduler, 'plateau_patience'):
+                    scheduler.step(val_loss=x['val'])
+            
+            # 早停机制
+            if x['val'] < best_val_loss:
+                best_val_loss = x['val']
+                patience_counter = 0
+                if print_logs:
+                    print(f"  ✓ 新的最佳验证loss: {best_val_loss:.4f}")
+            else:
+                patience_counter += 1
+                if patience_counter >= max_patience:
+                    print(f"  ⚠ 早停触发！验证loss连续{max_patience}轮未改善")
+                    break
 
             # 重置开始时间，用于计算下一轮的训练时间
             start_time = time.time()
 
-            # 打印下一轮的学习率，如果使用了lr_scheduler
-            if scheduler:
-                print("lr: ", scheduler.get_lr())
-
     # 上面所有epoch训练结束，打印最终的结果
-    print("Validation loss: ", losses[-1]['val'])
+    print(f"\n=== 训练结束 ===")
+    print(f"最佳验证loss: {best_val_loss:.4f}")
+    print(f"最终验证loss: {losses[-1]['val']:.4f}")
 
     # 返还每一步loss值的列表，因为我们要画图，返还的是loss迭代的图像
     return pd.DataFrame(losses).plot()
@@ -295,8 +322,8 @@ class RoPEMaskedAttentionHead(nn.Module):
         self.context_window = config['context_window']
         self.embedding_dim = config['d_model']
         
-        # 预计算并缓存旋转位置编码矩阵
-        self.register_buffer('R_cache', None)
+        # 预计算并缓存旋转位置编码矩阵 - 不作为模型参数保存
+        self.R_cache = None
         self.cache_device = None
 
     def _get_rotary_matrix(self, device):
@@ -550,21 +577,94 @@ def create_model(config=None):
         print(f"模型已移动到设备: {config['device']}")
     return model
 
-def create_optimizer(model, lr=1e-3, betas=(0.9, 0.95), weight_decay=0.1, eps=1e-9):
-    """创建优化器"""
-    return torch.optim.Adam(
-        model.parameters(),
-        lr=lr,
-        betas=betas,
-        weight_decay=weight_decay,
-        eps=eps
-    )
+def create_optimizer(model, lr=3e-4, betas=(0.9, 0.95), weight_decay=0.1, eps=1e-8):
+    """创建优化器 - 使用更适合大模型的学习率"""
+    # return torch.optim.AdamW(  # 使用AdamW，对权重衰减处理更好
+    #     model.parameters(),
+    #     lr=lr,
+    #     betas=betas,
+    #     weight_decay=weight_decay,
+    #     eps=eps
+    # )
+    return torch.optim.Adam(model.parameters())
 
-def create_scheduler(optimizer, T_max=300, eta_min=1e-5):
-    """创建学习率调度器"""
-    return torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=T_max, eta_min=eta_min
-    )
+class WarmupCosineScheduler:
+    """带预热的余弦退火学习率调度器，包含自适应调整功能"""
+    def __init__(self, optimizer, warmup_steps=100, max_steps=10000, min_lr=1e-6):
+        self.optimizer = optimizer
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
+        self.min_lr = min_lr
+        self.base_lr = optimizer.param_groups[0]['lr']
+        self.current_step = 0
+        
+        # 自适应学习率调整
+        self.plateau_patience = 10  # loss停滞容忍步数
+        self.plateau_factor = 0.5   # loss停滞时的学习率衰减因子
+        self.best_loss = float('inf')
+        self.plateau_count = 0
+        
+    def step(self, val_loss=None):
+        self.current_step += 1
+        
+        # 检查是否需要自适应调整学习率
+        if val_loss is not None:
+            if val_loss < self.best_loss:
+                self.best_loss = val_loss
+                self.plateau_count = 0
+            else:
+                self.plateau_count += 1
+                
+            # 如果loss停滞，降低学习率
+            if self.plateau_count >= self.plateau_patience:
+                self.base_lr *= self.plateau_factor
+                self.plateau_count = 0
+                print(f"  📉 检测到loss停滞，学习率降低至: {self.base_lr:.2e}")
+        
+        if self.current_step <= self.warmup_steps:
+            # 预热阶段：线性增长
+            lr = self.base_lr * (self.current_step / self.warmup_steps)
+        else:
+            # 余弦退火阶段
+            progress = (self.current_step - self.warmup_steps) / (self.max_steps - self.warmup_steps)
+            progress = min(progress, 1.0)
+            lr = self.min_lr + (self.base_lr - self.min_lr) * 0.5 * (1 + np.cos(np.pi * progress))
+        
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
+    
+    def get_lr(self):
+        return [group['lr'] for group in self.optimizer.param_groups]
+    
+    def state_dict(self):
+        """返回调度器的状态字典"""
+        return {
+            'current_step': self.current_step,
+            'base_lr': self.base_lr,
+            'best_loss': self.best_loss,
+            'plateau_count': self.plateau_count,
+            'warmup_steps': self.warmup_steps,
+            'max_steps': self.max_steps,
+            'min_lr': self.min_lr,
+            'plateau_patience': self.plateau_patience,
+            'plateau_factor': self.plateau_factor
+        }
+    
+    def load_state_dict(self, state_dict):
+        """加载调度器的状态字典"""
+        self.current_step = state_dict['current_step']
+        self.base_lr = state_dict['base_lr']
+        self.best_loss = state_dict['best_loss']
+        self.plateau_count = state_dict['plateau_count']
+        self.warmup_steps = state_dict['warmup_steps']
+        self.max_steps = state_dict['max_steps']
+        self.min_lr = state_dict['min_lr']
+        self.plateau_patience = state_dict['plateau_patience']
+        self.plateau_factor = state_dict['plateau_factor']
+
+def create_scheduler(optimizer, warmup_steps=100, max_steps=10000, min_lr=1e-6):
+    """创建带预热的学习率调度器"""
+    return WarmupCosineScheduler(optimizer, warmup_steps, max_steps, min_lr)
 
 def initialize_training_environment(data_file="xiyouji.txt", config=None):
     """初始化训练环境，返回所有必要的组件"""

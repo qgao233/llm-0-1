@@ -57,12 +57,21 @@ if device.type == 'cuda':
 
 # 创建优化器和调度器
 optimizer = create_optimizer(model)
-scheduler = create_scheduler(optimizer)
+# 根据总训练步数设置调度器参数
+total_steps = config['epochs']
+warmup_steps = min(100, total_steps // 10)  # 预热步数为总步数的10%，最多100步
+scheduler = create_scheduler(optimizer, warmup_steps=warmup_steps, max_steps=total_steps)
+
+print(f"优化器配置:")
+print(f"  学习率: {optimizer.param_groups[0]['lr']:.2e}")
+print(f"  预热步数: {warmup_steps}")
+print(f"  总训练步数: {total_steps}")
 
 # 开始训练
 print("\n开始正式训练...")
 start_training_time = time.time()
-train(model, optimizer, dataset, config, scheduler=scheduler, print_logs=True)
+# train(model, optimizer, dataset, config, scheduler=scheduler, print_logs=True)
+train(model, optimizer, dataset, config, scheduler=None, print_logs=True)
 training_time = time.time() - start_training_time
 
 print(f"\n=== 训练完成 ===")
@@ -76,7 +85,10 @@ os.makedirs(model_save_dir, exist_ok=True)
 
 print("保存模型...")
 model_save_path = f"{model_save_dir}/pytorch_model.bin"
-torch.save(model.state_dict(), model_save_path)
+# 过滤掉缓存，只保存真正的模型参数
+state_dict = model.state_dict()
+filtered_state_dict = {k: v for k, v in state_dict.items() if not k.endswith('.R_cache')}
+torch.save(filtered_state_dict, model_save_path)
 
 # 生成一个config文件（移除不可序列化的device对象）
 config_save_path = f"{model_save_dir}/config.json"

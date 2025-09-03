@@ -44,10 +44,23 @@ print("加载模型权重...")
 # 根据当前设备加载模型权重
 device = config['device']
 if device.type == 'cuda':
-    model.load_state_dict(torch.load(model_save_path))
+    state_dict = torch.load(model_save_path)
 else:
     # 如果当前使用CPU但模型是在GPU上训练的，需要映射到CPU
-    model.load_state_dict(torch.load(model_save_path, map_location='cpu'))
+    state_dict = torch.load(model_save_path, map_location='cpu')
+
+# 过滤掉缓存相关的键，这些不是模型参数
+filtered_state_dict = {k: v for k, v in state_dict.items() if not k.endswith('.R_cache')}
+
+# 加载过滤后的状态字典
+missing_keys, unexpected_keys = model.load_state_dict(filtered_state_dict, strict=False)
+
+if missing_keys:
+    print(f"警告: 缺少的键: {missing_keys}")
+if unexpected_keys:
+    print(f"警告: 意外的键: {unexpected_keys}")
+
+print("模型权重加载完成")
 
 # 设置为评估模式
 model.eval()
