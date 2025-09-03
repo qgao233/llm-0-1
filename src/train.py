@@ -3,22 +3,27 @@ from llmcore import (
     create_optimizer, 
     create_scheduler, 
     train,
-    get_default_config
+    get_default_config,
+    get_batches
 )
 import torch
 import json
 import os
+import time
 
-# 强制PyTorch使用更多GPU内存
+
+# 优化GPU设置
 if torch.cuda.is_available():
-    print("正在配置GPU内存管理...")
+    print("正在配置GPU优化设置...")
     # 清空GPU缓存
     torch.cuda.empty_cache()
     # 设置使用95%的GPU内存
     torch.cuda.set_per_process_memory_fraction(0.95)
-    # 启用内存分配器
-    torch.cuda.memory.set_per_process_memory_fraction(0.95)
-    print("GPU内存管理配置完成")
+    # 启用cudnn自动调优，首次运行会慢但后续会快
+    torch.backends.cudnn.benchmark = True
+    # 启用确定性操作（可选，会稍微影响性能但保证可重现性）
+    # torch.backends.cudnn.deterministic = True
+    print("GPU优化设置完成")
 
 # 初始化训练环境
 print("正在初始化训练环境...")
@@ -55,8 +60,14 @@ optimizer = create_optimizer(model)
 scheduler = create_scheduler(optimizer)
 
 # 开始训练
-print("开始训练...")
+print("\n开始正式训练...")
+start_training_time = time.time()
 train(model, optimizer, dataset, config, scheduler=scheduler, print_logs=True)
+training_time = time.time() - start_training_time
+
+print(f"\n=== 训练完成 ===")
+print(f"总训练时间: {training_time:.2f}秒")
+print(f"平均每epoch时间: {training_time/config['epochs']:.4f}秒")
 
 
 # 保存模型权重

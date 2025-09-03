@@ -31,7 +31,7 @@ def get_default_config(force_cpu=False):
         'context_window': 16, # 滑动窗口采样，设置采样大小
         'vocab_size': 4325, # 咱们的西游记数据集，一共包含4325个不重复的汉字，标点符号
         'd_model': 128, #模型为128维的embedding
-        'epochs': 100, # 训练轮次
+        'epochs': 10000, # 训练轮次
         'log_interval': 10, # 每10个batch打印一次log
         'n_heads': 8, # 32个注意力机制头，我们来8个吧
         'n_layers': 4, # 根据传入的堆叠层数，创建Llama功能块，注意OrderedDict为一种特殊类型的字典数据，保留字典写入的顺序，先插入的数据在前，后插入的数据在后。
@@ -87,26 +87,26 @@ def get_batches(data, split, batch_size, context_window, device=None):
     if split == 'test':
         batch_data = test
 
-    # 这里需要学习torch.randint，生成大小为batch_size，内部数值为随机整数的tensor。生成随机数数值域为[0,训练集字符数量-滑动窗口大小-1]之间的整数
-    # 详情可以参考官方文档，或者这个博客：https://blog.csdn.net/qq_41813454/article/details/136326473
-    ix = torch.randint(0, batch_data.size(0) - context_window - 1, (batch_size,))
-    # print('ix输出:')
-    # print(ix)
+    # 如果使用GPU，先将数据移动到GPU上，避免重复传输
+    if device is not None and device.type == 'cuda' and batch_data.device != device:
+        batch_data = batch_data.to(device)
 
+    # 在GPU上生成随机索引，避免CPU到GPU的传输
+    device_for_randint = device if device is not None else torch.device('cpu')
+    ix = torch.randint(0, batch_data.size(0) - context_window - 1, (batch_size,), device=device_for_randint)
 
-    # 这里需要学习torch.stack，执行操作类似于python的zip关键字，只不过操作对象是tensor张量，指定任意维度的张量进行组合
-    # 详情参考官方文档，或者这个博客：https://blog.csdn.net/dongjinkun/article/details/132590205
+    # 使用更高效的向量化索引方式，避免Python循环
+    # 创建索引矩阵，一次性获取所有batch数据
+    batch_indices = ix.unsqueeze(1) + torch.arange(context_window, device=ix.device).unsqueeze(0)
+    target_indices = batch_indices + 1
+    
+    x = batch_data[batch_indices].long()
+    y = batch_data[target_indices].long()
 
-    # 这里x作为特征，y作为预测值，因为文本生成任务是根据前n个字符，去推理后面的1个字符，因此y的构造会使窗口在保持原大小的基础上向后移一位
-    # 通过滑动窗口，对batch_data中的训练数据，进行随机取样，相当于随机选择训练数据。
-    # 在原65万多个字符中，随机选取一个字符作为开始，并以这个开始点，向后选取滑动窗口个数的字符，作为训练数据，向后移一位就是其目标值。  因此ix的构造不能超出index。
-    x = torch.stack([batch_data[i:i+context_window] for i in ix]).long()
-    y = torch.stack([batch_data[i+1:i+context_window+1] for i in ix]).long()
-
-    # 如果指定了设备，将数据移动到对应设备上
+    # 确保数据在正确的设备上
     if device is not None:
-        x = x.to(device)
-        y = y.to(device)
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
 
     # 返回特征值，目标值
     return x, y
@@ -291,35 +291,40 @@ class RoPEMaskedAttentionHead(nn.Module):
         self.w_k = nn.Linear(config['d_model'], config['d_model'], bias=False)
         # 计算V权重矩阵
         self.w_v = nn.Linear(config['d_model'], config['d_model'], bias=False)
-        # 获得旋转位置编码矩阵，接下来会覆盖Q和K权重矩阵
-        # 注意：这里先不创建R，等到forward时根据输入张量的设备来创建
+        
         self.context_window = config['context_window']
         self.embedding_dim = config['d_model']
+        
+        # 预计算并缓存旋转位置编码矩阵
+        self.register_buffer('R_cache', None)
+        self.cache_device = None
 
-
-    # 这里将上一个代码块中实现的创建旋转位置编码的功能函数原封不动的拿过来
-    def get_rotary_matrix(context_window, embedding_dim):
-        # 初始化一个0填充，形状为（context_window, embedding_dim, embedding_dim）的张量矩阵，其中context_window为token数量，后面两个embedding_dim组成正方形矩阵，与后面的attention计算对齐格式
-        R = torch.zeros((context_window, embedding_dim, embedding_dim), requires_grad=False)
-
-        # 遍历每一个位置的token
-        for position in range(context_window):
-            # 还记得我的上一篇文章中说的，对于特征，两两组合吗，因此需要循环的次数为embedding_dim除以2
-            for i in range(embedding_dim // 2):
-                # 设置θ值，采样频率，或者说旋转频率，旋转角都可以，除以embedding_dim防止梯度问题。
-                theta = 10000. ** (-2. * (i - 1) / embedding_dim)
-                # 根据欧拉公式，计算旋转的角度，分别有sin 和cos，将计算拉到复数空间，并将旋转角度应用在上面的0填充的矩阵
-                m_theta = position * theta
-                R[position, 2 * i, 2 * i] = np.cos(m_theta)
-                R[position, 2 * i, 2 * i + 1] = -np.sin(m_theta)
-                R[position, 2 * i + 1, 2 * i] = np.sin(m_theta)
-                R[position, 2 * i + 1, 2 * i + 1] = np.cos(m_theta)
-                # 得到的结果是旋转位置编码矩阵，到这里还没覆盖到attention
-        return R
+    def _get_rotary_matrix(self, device):
+        """获取旋转位置编码矩阵，使用缓存避免重复计算"""
+        # 如果缓存不存在或设备不匹配，重新创建
+        if self.R_cache is None or self.cache_device != device:
+            R = torch.zeros((self.context_window, self.embedding_dim, self.embedding_dim), 
+                          requires_grad=False, device=device)
+            
+            # 遍历每一个位置的token
+            for position in range(self.context_window):
+                # 计算旋转角度
+                for i in range(self.embedding_dim // 2):
+                    theta = 10000. ** (-2. * (i - 1) / self.embedding_dim)
+                    m_theta = position * theta
+                    R[position, 2 * i, 2 * i] = np.cos(m_theta)
+                    R[position, 2 * i, 2 * i + 1] = -np.sin(m_theta)
+                    R[position, 2 * i + 1, 2 * i] = np.sin(m_theta)
+                    R[position, 2 * i + 1, 2 * i + 1] = np.cos(m_theta)
+            
+            # 缓存矩阵和设备信息
+            self.R_cache = R
+            self.cache_device = device
+            
+        return self.R_cache
 
     def forward(self, x, return_attn_weights=False):
         # 前向传播时，输入矩阵的形状为(batch, sequence length, dimension)
-
         b, m, d = x.shape  # batch size, sequence length, dimension
 
         # 线性变换Q,K,V
@@ -327,20 +332,19 @@ class RoPEMaskedAttentionHead(nn.Module):
         k = self.w_k(x)
         v = self.w_v(x)
 
-        # 动态创建旋转位置编码矩阵，确保与输入张量在同一设备上
-        R = get_rotary_matrix(self.context_window, self.embedding_dim, device=x.device)
+        # 获取缓存的旋转位置编码矩阵
+        R = self._get_rotary_matrix(x.device)
         
-        # 将旋转位置编码应用于Q和K，其中torch.bmm为矩阵做外积，transpose是转置，对Q矩阵转置，并与旋转位置编码做外积，再转置回原状，Q便应用了旋转位置编码。
-        # 考虑到输入文本的长度，因此对位置编码矩阵在第一维度做截断，因为长了也没用，与文本长度一样。
+        # 将旋转位置编码应用于Q和K，只使用需要的部分
         q_rotated = (torch.bmm(q.transpose(0, 1), R[:m])).transpose(0, 1)
-        # 同理对K也应用旋转位置编码进行覆盖
         k_rotated = (torch.bmm(k.transpose(0, 1), R[:m])).transpose(0, 1)
 
-        # 对注意力机制点积进行等比例缩放，防止attention张量过长引发梯度爆炸，对应
+        # 对注意力机制点积进行等比例缩放
         activations = F.scaled_dot_product_attention(
             q_rotated, k_rotated, v, dropout_p=0.1, is_causal=True
         )
-        # 如果return_attn_weights参数置为1，则需要对attention进行掩码，因为在学习的时候，希望模型能依据前n个token去预测token，而不是开卷考试。
+        
+        # 如果需要返回注意力权重
         if return_attn_weights:
             # 生成上三角布尔掩码（未来位置为True）
             attn_mask = torch.triu(torch.ones(m, m, device=q_rotated.device), diagonal=1).bool()
@@ -573,10 +577,14 @@ def initialize_training_environment(data_file="xiyouji.txt", config=None):
     # 更新配置中的词表大小
     config['vocab_size'] = len(vocab)
     
-    # 如果使用GPU，将数据集也移动到GPU（可选，数据集通常保留在CPU上，在训练时动态移动batch）
+    # 如果使用GPU，将数据集移动到GPU上以避免重复传输
     device = config.get('device', torch.device('cpu'))
     if device.type == 'cuda':
-        print(f"数据集将在训练时动态移动到GPU")
+        print(f"将数据集移动到GPU: {device}")
+        dataset = dataset.to(device)
+        # 预热GPU，减少首次运行的开销
+        torch.cuda.synchronize()
+        print("GPU预热完成")
     
     # 创建模型
     model = create_model(config)
