@@ -1,0 +1,55 @@
+# LLM 模型配置文件
+# 训练相关配置
+training:
+  batch_size: 64           # 批次大小，增加批次大小提高训练稳定性
+  epochs: 8000            # 训练轮次
+  log_interval: 20        # 日志输出间隔
+  
+# 模型架构配置
+model:
+  context_window: 64      # 上下文窗口，增加上下文窗口提高语言建模能力
+  vocab_size: 4325        # 西游记数据集词表大小
+  d_model: 256            # 嵌入维度，增加嵌入维度提高模型表达能力
+  n_heads: 8              # 注意力头数
+  n_layers: 6             # Transformer层数，增加到6层提高模型深度
+  ffn_dim: 1024           # 前馈网络隐藏维度
+  dropout: 0.1            # Dropout概率，防止过拟合
+
+# 数据配置
+data:
+  data_file: "xiyouji.txt"  # 数据文件名
+  force_download: false     # 是否强制重新下载数据
+
+# 设备配置
+device:
+  force_cpu: false        # 是否强制使用CPU
+  
+# 优化器配置
+optimizer:
+  type: "Adam"            # 优化器类型: Adam 或 AdamW
+  lr: 0.001               # 学习率
+  betas: [0.9, 0.999]     # Adam的beta参数
+  weight_decay: 0.1       # 权重衰减
+  eps: 1e-8               # 数值稳定性参数
+
+# 学习率调度器配置
+scheduler:
+  enabled: false          # 是否启用学习率调度器
+  warmup_steps: 100       # 预热步数
+  min_lr: 1e-6           # 最小学习率
+  plateau_patience: 10    # loss停滞容忍步数
+  plateau_factor: 0.5     # loss停滞时的学习率衰减因子
+
+# 推理配置
+inference:
+  max_new_tokens: 100     # 生成的最大token数
+  temperature: 0.8        # 温度参数
+  top_k: 50              # top-k采样参数
+  top_p: 0.9             # top-p采样参数
+  enable_warmup: true     # 是否启用模型预热
+
+# 聊天配置
+chat:
+  max_tokens: 150         # 聊天时最大生成token数
+  stream_mode: true       # 是否启用实时流式输出
+  context_length: 5       # 对话历史保留轮数
