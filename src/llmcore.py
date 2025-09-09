@@ -4,19 +4,43 @@ from torch.nn import functional as F
 import numpy as np
 from collections import OrderedDict
 
-def get_device(force_cpu=False):
-    """检测并返回可用的设备"""
+def get_device(force_cpu=False, device_config=None):
+    """检测并返回可用的设备，支持多GPU"""
     if force_cpu:
         device = torch.device("cpu")
         print("强制使用CPU进行计算")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用GPU: {torch.cuda.get_device_name()}")
-        print(f"GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    else:
+        return device, False, []
+    
+    if not torch.cuda.is_available():
         device = torch.device("cpu")
         print("CUDA不可用，使用CPU进行计算")
-    return device
+        return device, False, []
+    
+    # 获取可用的GPU数量和信息
+    gpu_count = torch.cuda.device_count()
+    print(f"🎮 检测到 {gpu_count} 个可用GPU:")
+    
+    available_gpus = []
+    for i in range(gpu_count):
+        gpu_name = torch.cuda.get_device_name(i)
+        gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+        print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+        available_gpus.append(i)
+    
+    # 检查是否启用多GPU训练
+    use_multi_gpu = gpu_count > 1
+    if device_config and 'multi_gpu' in device_config:
+        use_multi_gpu = device_config['multi_gpu'] and gpu_count > 1
+    
+    # 选择主GPU设备
+    primary_device = torch.device("cuda:0")
+    
+    if use_multi_gpu:
+        print(f"🚀 启用多GPU训练，使用 {gpu_count} 个GPU")
+        return primary_device, True, available_gpus
+    else:
+        print(f"📱 使用单GPU训练: {torch.cuda.get_device_name(0)}")
+        return primary_device, False, [0]
 
 
 def decode_text(indices, itos):
@@ -297,18 +321,23 @@ class Llmpvq(nn.Module):
             # 重塑张量以计算交叉熵损失
             logits_flat = logits.view(-1, self.config['vocab_size'])
             targets_flat = targets.view(-1)
-            loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=-1)
+            loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=-1, reduction='mean')
+            # 确保损失是标量 - 在多GPU环境下特别重要
+            if loss.dim() > 0:
+                loss = loss.mean()
             return logits, loss
         else:
             return logits
 
 # 便利函数
 def create_model(config=None):
-    """创建模型实例"""
+    """创建模型实例，支持多GPU"""
     if config is None:
         raise ValueError("必须提供配置参数,config不能为None")
     
     device = config.get('device', torch.device('cpu'))
+    multi_gpu = config.get('multi_gpu', False)
+    gpu_ids = config.get('gpu_ids', [])
     
     # 如果使用GPU，进行优化设置
     if device.type == 'cuda':
@@ -331,14 +360,23 @@ def create_model(config=None):
     print("🏗️ 创建模型...")
     model = Llmpvq(config)
     
-    # 将模型移动到指定设备
-    if 'device' in config:
-        model = model.to(config['device'])
-        print(f"模型已移动到设备: {config['device']}")
+    # 将模型移动到主设备
+    model = model.to(device)
+    print(f"模型已移动到主设备: {device}")
+    
+    # 如果启用多GPU，使用DataParallel
+    if multi_gpu and len(gpu_ids) > 1:
+        print(f"🎯 启用多GPU并行训练，使用GPU: {gpu_ids}")
+        model = nn.DataParallel(model, device_ids=gpu_ids)
+        print(f"✅ DataParallel已启用，主GPU: {device}")
         
-        # 如果是GPU，确保所有操作完成
-        if device.type == 'cuda':
-            torch.cuda.synchronize()
+        # 计算多GPU下的有效批次大小
+        effective_batch_size = config.get('batch_size', 32) * len(gpu_ids)
+        print(f"📊 有效批次大小: {config.get('batch_size', 32)} × {len(gpu_ids)} = {effective_batch_size}")
+    
+    # 确保所有GPU操作完成
+    if device.type == 'cuda':
+        torch.cuda.synchronize()
     
     return model
 

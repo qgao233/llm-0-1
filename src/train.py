@@ -108,6 +108,10 @@ def evaluate_loss(model, dataset, config):
 
             # 把拿到的数据丢进模型，得到loss值
             _, loss = model(xb, yb)
+            
+            # 确保损失是标量（多GPU环境下的额外保护）
+            if hasattr(loss, 'mean') and loss.dim() > 0:
+                loss = loss.mean()
 
             # 更新loss存储
             losses.append(loss.item())
@@ -139,33 +143,50 @@ def create_optimizer(model, config_manager=None, **kwargs):
     # 用传入的参数覆盖配置
     opt_config.update(kwargs)
     
+    # 确保数值参数是正确的类型
+    try:
+        lr = float(opt_config['lr'])
+        weight_decay = float(opt_config['weight_decay'])
+        eps = float(opt_config['eps'])
+        betas = [float(b) for b in opt_config['betas']]
+    except (ValueError, TypeError) as e:
+        print(f"❌ 优化器参数类型转换错误: {e}")
+        print(f"原始配置: {opt_config}")
+        raise
+    
     optimizer_type = opt_config.get('type', 'Adam')
+    
+    print(f"🔧 创建优化器: {optimizer_type}")
+    print(f"  学习率: {lr}")
+    print(f"  权重衰减: {weight_decay}")
+    print(f"  eps: {eps}")
+    print(f"  betas: {betas}")
     
     if optimizer_type.lower() == 'adamw':
         return torch.optim.AdamW(
             model.parameters(),
-            lr=opt_config['lr'],
-            betas=tuple(opt_config['betas']),
-            weight_decay=opt_config['weight_decay'],
-            eps=opt_config['eps']
+            lr=lr,
+            betas=tuple(betas),
+            weight_decay=weight_decay,
+            eps=eps
         )
     else:  # 默认使用 Adam
         return torch.optim.Adam(
             model.parameters(),
-            lr=opt_config['lr'],
-            betas=tuple(opt_config['betas']),
-            weight_decay=opt_config['weight_decay'],
-            eps=opt_config['eps']
+            lr=lr,
+            betas=tuple(betas),
+            weight_decay=weight_decay,
+            eps=eps
         )
 
 class WarmupCosineScheduler:
     """带预热的余弦退火学习率调度器，包含自适应调整功能"""
     def __init__(self, optimizer, warmup_steps=100, max_steps=10000, min_lr=1e-6):
         self.optimizer = optimizer
-        self.warmup_steps = warmup_steps
-        self.max_steps = max_steps
-        self.min_lr = min_lr
-        self.base_lr = optimizer.param_groups[0]['lr']
+        self.warmup_steps = int(warmup_steps)
+        self.max_steps = int(max_steps)
+        self.min_lr = float(min_lr)
+        self.base_lr = float(optimizer.param_groups[0]['lr'])
         self.current_step = 0
         
         # 自适应学习率调整
@@ -179,6 +200,7 @@ class WarmupCosineScheduler:
         
         # 检查是否需要自适应调整学习率
         if val_loss is not None:
+            val_loss = float(val_loss)  # 确保是浮点数
             if val_loss < self.best_loss:
                 self.best_loss = val_loss
                 self.plateau_count = 0
@@ -187,19 +209,28 @@ class WarmupCosineScheduler:
                 
             # 如果loss停滞，降低学习率
             if self.plateau_count >= self.plateau_patience:
-                self.base_lr *= self.plateau_factor
+                self.base_lr = float(self.base_lr) * float(self.plateau_factor)
                 self.plateau_count = 0
                 print(f"  📉 检测到loss停滞，学习率降低至: {self.base_lr:.2e}")
         
-        if self.current_step <= self.warmup_steps:
+        # 确保所有计算使用浮点数
+        base_lr = float(self.base_lr)
+        min_lr = float(self.min_lr)
+        current_step = float(self.current_step)
+        warmup_steps = float(self.warmup_steps)
+        max_steps = float(self.max_steps)
+        
+        if current_step <= warmup_steps:
             # 预热阶段：线性增长
-            lr = self.base_lr * (self.current_step / self.warmup_steps)
+            lr = base_lr * (current_step / warmup_steps)
         else:
             # 余弦退火阶段
-            progress = (self.current_step - self.warmup_steps) / (self.max_steps - self.warmup_steps)
+            progress = (current_step - warmup_steps) / (max_steps - warmup_steps)
             progress = min(progress, 1.0)
-            lr = self.min_lr + (self.base_lr - self.min_lr) * 0.5 * (1 + np.cos(np.pi * progress))
+            lr = min_lr + (base_lr - min_lr) * 0.5 * (1 + np.cos(np.pi * progress))
         
+        # 确保学习率是浮点数
+        lr = float(lr)
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
     
@@ -248,12 +279,36 @@ def create_scheduler(optimizer, config_manager=None, max_steps=10000, **kwargs):
     # 用传入的参数覆盖配置
     sch_config.update(kwargs)
     
-    return WarmupCosineScheduler(
+    # 确保数值参数是正确的类型
+    try:
+        warmup_steps = int(sch_config['warmup_steps'])
+        min_lr = float(sch_config['min_lr'])
+        plateau_patience = int(sch_config.get('plateau_patience', 10))
+        plateau_factor = float(sch_config.get('plateau_factor', 0.5))
+    except (ValueError, TypeError) as e:
+        print(f"❌ 调度器参数类型转换错误: {e}")
+        print(f"原始配置: {sch_config}")
+        raise
+    
+    print(f"🔧 创建学习率调度器:")
+    print(f"  预热步数: {warmup_steps}")
+    print(f"  最大步数: {max_steps}")
+    print(f"  最小学习率: {min_lr}")
+    print(f"  平台容忍度: {plateau_patience}")
+    print(f"  平台衰减因子: {plateau_factor}")
+    
+    scheduler = WarmupCosineScheduler(
         optimizer, 
-        warmup_steps=sch_config['warmup_steps'],
+        warmup_steps=warmup_steps,
         max_steps=max_steps,
-        min_lr=sch_config['min_lr']
+        min_lr=min_lr
     )
+    
+    # 设置平台检测参数
+    scheduler.plateau_patience = plateau_patience
+    scheduler.plateau_factor = plateau_factor
+    
+    return scheduler
 
 # ==================== 训练函数 ====================
 
@@ -278,6 +333,10 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
 
         # 前向传播计算概率矩阵与loss
         logits, loss = model(xs, targets=ys)
+        
+        # 确保损失是标量（多GPU环境下的额外保护）
+        if hasattr(loss, 'mean') and loss.dim() > 0:
+            loss = loss.mean()
 
         # 反向传播更新权重参数，更新学习率优化器
         loss.backward()
@@ -341,7 +400,7 @@ def train(model, optimizer, dataset, config, scheduler=None, print_logs=False):
 
 # ==================== 训练环境初始化 ====================
 
-def initialize_training_environment(config_path="../config.yaml", config_manager=None):
+def initialize_training_environment(config_path="config/config.yaml", config_manager=None):
     """初始化训练环境，返回所有必要的组件"""
     if config_manager is None:
         config_manager = get_config_manager(config_path)
@@ -349,6 +408,19 @@ def initialize_training_environment(config_path="../config.yaml", config_manager
     # 获取配置
     config = config_manager.get_training_config()
     data_config = config_manager.get_data_config()
+    device_config = config_manager.config.get('device', {})
+    
+    # 设置设备
+    from llmcore import get_device
+    device, multi_gpu, gpu_ids = get_device(
+        force_cpu=device_config.get('force_cpu', False),
+        device_config=device_config
+    )
+    
+    # 更新配置中的设备信息
+    config['device'] = device
+    config['multi_gpu'] = multi_gpu
+    config['gpu_ids'] = gpu_ids
     
     # 准备数据
     dataset, vocab, itos, stoi = download_and_prepare_data(
@@ -359,10 +431,9 @@ def initialize_training_environment(config_path="../config.yaml", config_manager
     # 更新配置中的词表大小
     config['vocab_size'] = len(vocab)
     
-    # 如果使用GPU，将数据集移动到GPU上以避免重复传输
-    device = config.get('device', torch.device('cpu'))
+    # 如果使用GPU，将数据集移动到主GPU上以避免重复传输
     if device.type == 'cuda':
-        print(f"将数据集移动到GPU: {device}")
+        print(f"将数据集移动到主GPU: {device}")
         dataset = dataset.to(device)
         # 预热GPU，减少首次运行的开销
         torch.cuda.synchronize()
@@ -385,17 +456,17 @@ def initialize_training_environment(config_path="../config.yaml", config_manager
 
 def setup_gpu_optimization():
     """设置GPU优化配置"""
-if torch.cuda.is_available():
-    print("正在配置GPU优化设置...")
-    # 清空GPU缓存
-    torch.cuda.empty_cache()
-    # 设置使用95%的GPU内存
-    torch.cuda.set_per_process_memory_fraction(0.95)
-    # 启用cudnn自动调优，首次运行会慢但后续会快
-    torch.backends.cudnn.benchmark = True
-    # 启用确定性操作（可选，会稍微影响性能但保证可重现性）
-    # torch.backends.cudnn.deterministic = True
-    print("GPU优化设置完成")
+    if torch.cuda.is_available():
+        print("正在配置GPU优化设置...")
+        # 清空GPU缓存
+        torch.cuda.empty_cache()
+        # 设置使用95%的GPU内存
+        torch.cuda.set_per_process_memory_fraction(0.95)
+        # 启用cudnn自动调优，首次运行会慢但后续会快
+        torch.backends.cudnn.benchmark = True
+        # 启用确定性操作（可选，会稍微影响性能但保证可重现性）
+        # torch.backends.cudnn.deterministic = True
+        print("GPU优化设置完成")
         return True
     return False
 
@@ -415,21 +486,52 @@ def print_gpu_memory_info(device):
         print(f"  总计: {total:.3f} GB")
         print(f"  使用率: {reserved/total*100:.1f}%")
     
-def print_device_info(device):
+def print_device_info(device, config=None):
     """打印设备信息"""
-    print(f"当前使用的计算设备: {device}")
-    if device.type == 'cuda':
+    print(f"当前主要计算设备: {device}")
+    
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        print(f"🎮 可用GPU总数: {gpu_count}")
+        
+        # 打印每个GPU的信息
+        for i in range(gpu_count):
+            gpu_name = torch.cuda.get_device_name(i)
+            gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+            print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+        
         print(f"CUDA版本: {torch.version.cuda}")
         print(f"cuDNN版本: {torch.backends.cudnn.version()}")
-        print_gpu_memory_info(device)
+        
+        # 显示多GPU配置信息
+        if config and config.get('multi_gpu', False):
+            gpu_ids = config.get('gpu_ids', [])
+            print(f"🚀 多GPU训练模式:")
+            print(f"  使用的GPU: {gpu_ids}")
+            print(f"  主GPU: {device}")
+            print(f"  并行GPU数量: {len(gpu_ids)}")
+            
+            # 显示每个训练GPU的内存状态
+            for gpu_id in gpu_ids:
+                gpu_device = torch.device(f'cuda:{gpu_id}')
+                print(f"\n📊 GPU {gpu_id} 内存状态:")
+                print_gpu_memory_info(gpu_device)
+        else:
+            # 显示单GPU内存信息
+            if device.type == 'cuda':
+                current_gpu = device.index if device.index is not None else 0
+                print(f"\n📊 单GPU模式 - GPU {current_gpu} 内存状态:")
+                print_gpu_memory_info(device)
+    else:
+        print("❌ CUDA不可用，使用CPU进行计算")
 
 def save_model_and_config(model, config, optimizer, scheduler, save_dir="./model_save"):
     """保存模型、配置和训练状态"""
     os.makedirs(save_dir, exist_ok=True)
-    
-    print("保存模型...")
 
-# 保存模型权重
+    print("保存模型...")
+    
+    # 保存模型权重
     model_save_path = os.path.join(save_dir, "pytorch_model.bin")
     state_dict = model.state_dict()
     # 过滤掉缓存，只保存真正的模型参数
@@ -438,19 +540,19 @@ def save_model_and_config(model, config, optimizer, scheduler, save_dir="./model
     
     # 保存配置文件
     config_save_path = os.path.join(save_dir, "config.json")
-config_serializable = {k: v for k, v in config.items() if k != 'device'}
-config_serializable['device_type'] = str(config['device'])  # 保存设备类型的字符串表示
+    config_serializable = {k: v for k, v in config.items() if k != 'device'}
+    config_serializable['device_type'] = str(config['device'])  # 保存设备类型的字符串表示
     with open(config_save_path, 'w', encoding='utf-8') as f:
         json.dump(config_serializable, f, indent=2, ensure_ascii=False)
 
     # 保存优化器状态
     optimizer_save_path = os.path.join(save_dir, "optimizer.pt")
-torch.save(optimizer.state_dict(), optimizer_save_path)
+    torch.save(optimizer.state_dict(), optimizer_save_path)
 
     # 保存调度器状态
     if scheduler is not None:
         scheduler_save_path = os.path.join(save_dir, "scheduler.pt")
-torch.save(scheduler.state_dict(), scheduler_save_path)
+        torch.save(scheduler.state_dict(), scheduler_save_path)
 
     print(f"训练完成，模型已保存到 {save_dir}")
 
@@ -471,7 +573,7 @@ def print_final_gpu_stats(device):
     print(f"GPU总内存: {total:.3f} GB")
     print(f"峰值使用率: {max_allocated/total*100:.1f}%")
 
-def run_training(config_path="../config.yaml", use_scheduler=None):
+def run_training(config_path="config/config.yaml", use_scheduler=None):
     """运行训练流程"""
     try:
         # 设置GPU优化
@@ -488,7 +590,7 @@ def run_training(config_path="../config.yaml", use_scheduler=None):
         
         # 显示设备信息
         device = config['device']
-        print_device_info(device)
+        print_device_info(device, config)
         
         # 打印配置信息
         print("\n📋 当前训练配置:")
@@ -552,7 +654,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='训练LLM模型')
-    parser.add_argument('--config', default='../config.yaml', help='配置文件路径')
+    parser.add_argument('--config', default='config/config.yaml', help='配置文件路径')
     parser.add_argument('--scheduler', action='store_true', help='强制启用学习率调度器')
     parser.add_argument('--no-scheduler', action='store_true', help='强制禁用学习率调度器')
     

@@ -256,7 +256,7 @@ def load_model_and_config(model_dir="./model_save", enable_warmup=True):
 
     return model, config
 
-def run_inference_demo(config_path="../config.yaml"):
+def run_inference_demo(config_path="config/config.yaml"):
     """运行推理演示"""
     try:
         # 加载配置管理器
@@ -314,7 +314,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='运行模型推理演示')
-    parser.add_argument('--config', default='../config.yaml', help='配置文件路径')
+    parser.add_argument('--config', default='config/config.yaml', help='配置文件路径')
     
     args = parser.parse_args()
     
