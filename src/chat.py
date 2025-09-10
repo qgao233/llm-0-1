@@ -3,14 +3,14 @@
 交互式聊天模式 - 与训练好的LLM模型对话
 """
 
-from llmcore import decode_text
-from train import download_and_prepare_data
+from data_processor import DataProcessor, download_and_prepare_data
 from config_manager import get_config_manager
 from infer import sample_next_token, load_model_and_config, warmup_model
 import torch
 import json
 import os
 import sys
+import time
 from typing import List, Dict
 
 class ChatBot:
@@ -24,9 +24,9 @@ class ChatBot:
         self.conversation_history = []
         
         # 加载模型和配置
-        self._load_model()
+        self._load_model(config_path="config/config.yaml")
         
-    def _load_model(self):
+    def _load_model(self, config_path):
         """加载模型和相关配置"""
         try:
             # 询问是否需要预热（加速首次推理）
@@ -38,7 +38,18 @@ class ChatBot:
 
             # 准备词表
             print("📚 准备词表...")
-            dataset, vocab, itos, stoi = download_and_prepare_data()
+            # 读取配置以确保使用正确的分词器
+            config_manager = get_config_manager(config_path)
+            data_config = config_manager.get_data_config()
+            use_bpe = data_config.get('use_bpe_tokenizer', False)  # 默认false确保兼容性
+            print(f"🔤 使用分词器类型: {'BPE' if use_bpe else '字符级'}")
+            
+            # 创建数据处理器
+            tokenizer_type = "chinese_bpe" if use_bpe else "char_level"
+            vocab_path = data_config.get('vocab_cache_path', 'chinese_tokenizer_vocab.json') if use_bpe else None
+            self.data_processor = DataProcessor(tokenizer_type=tokenizer_type, vocab_path=vocab_path)
+            
+            dataset, vocab, itos, stoi = self.data_processor.download_and_prepare_data()
             self.itos = itos
             self.stoi = stoi
             print("✅ 词表准备完成")
@@ -49,15 +60,24 @@ class ChatBot:
 
     def _encode_text(self, text: str) -> List[int]:
         """将文本编码为token序列"""
-        return [self.stoi.get(ch, 0) for ch in text if ch in self.stoi]
+        # 使用data_processor进行编码（支持BPE）
+        if hasattr(self, 'data_processor') and self.data_processor:
+            return self.data_processor.encode_text(text)
+        else:
+            # 降级到字符级编码
+            return [self.stoi.get(ch, 0) for ch in text if ch in self.stoi]
 
     def _decode_tokens(self, tokens: List[int]) -> str:
         """将token序列解码为文本"""
-        return ''.join([self.itos.get(idx, '') for idx in tokens])
+        # 使用data_processor进行解码（支持BPE）
+        if hasattr(self, 'data_processor') and self.data_processor:
+            return self.data_processor.decode_text(tokens)
+        else:
+            # 降级到字符级解码
+            return ''.join([self.itos.get(idx, '') for idx in tokens])
 
     def generate_response(self, prompt: str, max_tokens: int = 150, 
-                         temperature: float = 0.8, top_k: int = 50, top_p: float = 0.9, 
-                         show_progress: bool = False) -> str:
+                         temperature: float = 0.8, top_k: int = 50, top_p: float = 0.9) -> str:
         """生成回复"""
         device = self.config['device']
         
@@ -68,12 +88,9 @@ class ChatBot:
             
         # 转换为张量
         idx = torch.tensor([input_tokens], dtype=torch.long, device=device)
-        
+        # idx = torch.randint(1, 4000, (5, 1)).long().to(device)
         # 生成回复
         generated_tokens = []
-        
-        if show_progress:
-            print("🤖 助手: ", end="", flush=True)
         
         with torch.no_grad():
             for step in range(max_tokens):
@@ -96,25 +113,29 @@ class ChatBot:
                 idx = torch.cat([idx, next_token], dim=-1)
                 generated_tokens.append(next_token[0].item())
                 
-                # 实时显示生成的字符
-                if show_progress:
-                    new_char = self.itos.get(next_token[0].item(), '')
-                    if new_char:  # 只显示有效字符
-                        print(new_char, end="", flush=True)
-                
                 # 检查是否生成了结束符或标点
-                new_char = self.itos.get(next_token[0].item(), '')
-                
+                try:
+                    new_char = self._decode_tokens([next_token[0].item()])
+                except:
+                    new_char = ''
+
                 # 如果生成了换行符且长度足够，也可以停止
                 if new_char == '\n' and len(generated_tokens) >= max_tokens - 10:
                     break
         
-        if show_progress:
-            print()  # 换行
-        
         # 解码生成的文本
-        response = self._decode_tokens(generated_tokens)
-        return response.strip()
+        response = self._decode_tokens(generated_tokens).strip()
+        return response
+
+    def _fake_stream_output(self, text: str, delay: float = 0.03):
+        """假的流式输出效果 - 逐字符显示已生成的完整文本"""
+        print("🤖 助手: ", end="", flush=True)
+        
+        for char in text:
+            print(char, end="", flush=True)
+            time.sleep(delay)  # 控制显示速度
+        
+        print()  # 换行
 
     def add_to_history(self, user_input: str, bot_response: str):
         """添加对话到历史记录"""
@@ -151,7 +172,7 @@ class ChatBot:
         print("🎛️ 输入 'settings' 查看和修改生成参数")
         print("📜 输入 'history' 查看对话历史")
         print("🔄 输入 'clear' 清空对话历史")
-        print("⚡ 输入 'stream' 切换实时生成显示模式")
+        print("⚡ 输入 'stream' 切换流式输出显示模式")
         print("="*60)
         
         # 默认生成参数 - 增加输出长度
@@ -159,7 +180,8 @@ class ChatBot:
             'max_tokens': 150,
             'temperature': 0.8,
             'top_k': 50,
-            'top_p': 0.9
+            'top_p': 0.9,
+            'stream_delay': 0.03  # 流式输出延迟（秒）
         }
         
         # 实时生成显示模式
@@ -193,28 +215,34 @@ class ChatBot:
                 elif user_input.lower() == 'stream':
                     stream_mode = not stream_mode
                     status = "开启" if stream_mode else "关闭"
-                    print(f"⚡ 实时生成显示已{status}")
+                    print(f"⚡ 流式输出显示已{status}")
                     continue
                 
                 # 构建上下文提示
                 context_prompt = self.get_context_prompt(user_input)
                 
-                # 生成回复 - 根据模式决定是否实时显示
-                if not stream_mode:
-                    print("🤔 思考中...", end="", flush=True)
+                # 生成回复 - 显示思考中提示
+                thinking_text = "🤔 思考中..."
+                print(thinking_text, end="", flush=True)
                 
                 response = self.generate_response(
                     context_prompt,
                     max_tokens=settings['max_tokens'],
                     temperature=settings['temperature'],
                     top_k=settings['top_k'],
-                    top_p=settings['top_p'],
-                    show_progress=stream_mode  # 根据用户设置决定是否实时显示
+                    top_p=settings['top_p']
                 )
                 
+                # 清除"思考中..."提示 - 使用足够长的空格来覆盖
+                clear_spaces = " " * (len(thinking_text) + 5)  # 额外增加5个空格确保完全覆盖
+                print(f"\r{clear_spaces}\r", end="", flush=True)
+
+                # 如果不是流式模式，直接显示完整回复
                 if not stream_mode:
-                    print("\r" + " "*20 + "\r", end="")  # 清除"思考中..."
                     print(f"🤖 助手: {response}")
+                else:
+                    # 如果需要显示进度，使用假流式输出
+                    self._fake_stream_output(response, delay=settings['stream_delay'])
                 
                 if response:
                     self.add_to_history(user_input, response)
@@ -239,6 +267,7 @@ class ChatBot:
         print("  temperature: 随机性 (0.1-2.0, 越小越保守)")
         print("  top_k: 候选词数量 (1-100, 0表示不限制)")
         print("  top_p: 累积概率阈值 (0.1-1.0)")
+        print("  stream_delay: 流式输出延迟秒数 (0.01-0.1)")
         
         modify = input("\n🔧 是否要修改参数？(y/n): ").strip().lower()
         if modify == 'y':
@@ -254,6 +283,8 @@ class ChatBot:
                             settings[key] = max(0, min(100, int(new_value)))
                         elif key == 'top_p':
                             settings[key] = max(0.1, min(1.0, float(new_value)))
+                        elif key == 'stream_delay':
+                            settings[key] = max(0.01, min(0.1, float(new_value)))
                 print("✅ 参数已更新")
             except ValueError:
                 print("❌ 参数格式错误，保持原设置")

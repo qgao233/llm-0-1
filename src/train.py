@@ -1,5 +1,6 @@
 from llmcore import create_model
 from config_manager import get_config_manager
+from data_processor import DataProcessor, encode_text, decode_text
 import torch
 import torch.nn.functional as F
 import json
@@ -8,42 +9,6 @@ import time
 import pandas as pd
 import numpy as np
 import urllib.request
-
-# ==================== 数据准备函数 ====================
-
-def download_and_prepare_data(data_file="xiyouji.txt", force_download=False):
-    """下载并准备数据集"""
-    if not os.path.exists(data_file) or force_download:
-        print(f"正在下载数据集到 {data_file}...")
-        url = "https://raw.githubusercontent.com/mc112611/PI-ka-pi/main/xiyouji.txt"
-        urllib.request.urlretrieve(url, data_file)
-        print("数据集下载完成")
-    
-    # 读取数据
-    with open(data_file, 'r', encoding='utf-8') as f:
-        lines = f.read()
-    
-    # 创建词表
-    vocab = sorted(list(set(lines)))
-    print(f'词表大小: {len(vocab)}')
-    
-    # 创建编码映射
-    itos = {i: ch for i, ch in enumerate(vocab)}
-    stoi = {ch: i for i, ch in enumerate(vocab)}
-    
-    # 编码整个数据集
-    dataset = torch.tensor([stoi[ch] for ch in lines], dtype=torch.int16)
-    print(f'数据集形状: {dataset.shape}')
-    
-    return dataset, vocab, itos, stoi
-
-def encode_text(text, stoi):
-    """编码文本为数字序列"""
-    return [stoi[ch] for ch in text]
-
-def decode_text(indices, itos):
-    """解码数字序列为文本"""
-    return ''.join([itos[i] for i in indices])
 
 # ==================== 数据处理函数 ====================
 
@@ -422,14 +387,23 @@ def initialize_training_environment(config_path="config/config.yaml", config_man
     config['multi_gpu'] = multi_gpu
     config['gpu_ids'] = gpu_ids
     
+    # 创建数据处理器
+    use_bpe = data_config.get('use_bpe_tokenizer', True)
+    vocab_path = data_config.get('vocab_cache_path', 'chinese_tokenizer_vocab.json')
+    
+    print(f"📝 分词器类型: {'中文优化BPE' if use_bpe else '字符级'}")
+    
+    tokenizer_type = "chinese_bpe" if use_bpe else "char_level"
+    data_processor = DataProcessor(tokenizer_type=tokenizer_type, vocab_path=vocab_path if use_bpe else None)
+    
     # 准备数据
-    dataset, vocab, itos, stoi = download_and_prepare_data(
+    dataset, vocab, itos, stoi = data_processor.download_and_prepare_data(
         data_file=data_config.get('data_file', 'xiyouji.txt'),
         force_download=data_config.get('force_download', False)
     )
     
     # 更新配置中的词表大小
-    config['vocab_size'] = len(vocab)
+    config['vocab_size'] = data_processor.vocab_size
     
     # 如果使用GPU，将数据集移动到主GPU上以避免重复传输
     if device.type == 'cuda':
@@ -449,7 +423,8 @@ def initialize_training_environment(config_path="config/config.yaml", config_man
         'itos': itos,
         'stoi': stoi,
         'config': config,
-        'config_manager': config_manager
+        'config_manager': config_manager,
+        'data_processor': data_processor
     }
 
 # ==================== GPU优化和辅助函数 ====================

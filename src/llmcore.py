@@ -43,10 +43,6 @@ def get_device(force_cpu=False, device_config=None):
         return primary_device, False, [0]
 
 
-def decode_text(indices, itos):
-    """解码数字序列为文本 - 保留用于推理"""
-    return ''.join([itos[i] for i in indices])
-
 
 class RMSNorm(nn.Module):
     def __init__(self, layer_shape, eps=1e-8, bias=False):

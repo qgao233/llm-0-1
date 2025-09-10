@@ -19,6 +19,8 @@ model:
 data:
   data_file: "xiyouji.txt"  # 数据文件名
   force_download: false     # 是否强制重新下载数据
+  use_bpe_tokenizer: true   # 是否使用BPE分词器 (true=中文优化BPE, false=字符级)
+  vocab_cache_path: "chinese_tokenizer_vocab.json"  # BPE词汇表缓存路径
 
 # 设备配置
 device:

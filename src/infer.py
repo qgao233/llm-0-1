@@ -1,9 +1,8 @@
 from llmcore import (
     create_model, 
-    get_device,
-    decode_text
+    get_device
 )
-from train import download_and_prepare_data
+from data_processor import DataProcessor, download_and_prepare_data, decode_text
 from config_manager import get_config_manager
 import torch
 import torch.nn.functional as F
@@ -87,7 +86,7 @@ def sample_next_token(logits, temperature=1.0, top_k=0, top_p=1.0):
     
     return next_token
 
-def generate(model, itos, config, max_new_tokens=100, temperature=1.0, top_k=50, top_p=0.9, seed_text=None):
+def generate(model, itos, config, max_new_tokens=100, temperature=1.0, top_k=50, top_p=0.9, seed_text=None, data_processor=None):
     """
     生成文本 - 优化版本
     
@@ -151,7 +150,7 @@ def generate(model, itos, config, max_new_tokens=100, temperature=1.0, top_k=50,
         generated_count += 1
         
         # 检查是否生成了自然的停止符
-        new_char = itos.get(idx_next[0].item(), '')
+        new_char = data_processor.decode_text([idx_next[0].item()])
         if new_char in ['。', '！', '？', '\n'] and generated_count >= 20:
             # 生成了句号等结束符，且已生成足够长度，可以停止
             break
@@ -162,7 +161,29 @@ def generate(model, itos, config, max_new_tokens=100, temperature=1.0, top_k=50,
     
     # 解码生成的序列
     print("最终序列形状:", idx.shape)
-    generated_texts = [decode_text(x, itos) for x in idx.tolist()]
+    print("前10个token IDs:", idx[0][:10].tolist() if idx.size(0) > 0 else "空序列")
+    
+    # 检查itos词表是否正常
+    print(f"词表样例: {list(itos.items())[:5]}")
+    
+    generated_texts = []
+    for i, token_ids in enumerate(idx.tolist()):
+        try:
+            # 使用data_processor进行解码（如果可用）
+            if data_processor:
+                text = data_processor.decode_text(token_ids)
+            else:
+                # 降级到使用itos
+                valid_token_ids = [tid for tid in token_ids if tid in itos]
+                if len(valid_token_ids) != len(token_ids):
+                    print(f"⚠️ 序列{i+1}中有{len(token_ids) - len(valid_token_ids)}个无效token ID")
+                text = decode_text(valid_token_ids, itos=itos)
+            
+            generated_texts.append(text)
+            print(f"序列{i+1}解码: {text[:50]}{'...' if len(text) > 50 else ''}")
+        except Exception as e:
+            print(f"❌ 序列{i+1}解码失败: {e}")
+            generated_texts.append(f"<解码失败: {e}>")
     
     return generated_texts
 
@@ -269,11 +290,31 @@ def run_inference_demo(config_path="config/config.yaml"):
         # 准备数据（主要是为了获取词表）
         print("准备词表...")
         data_config = config_manager.get_data_config()
-        dataset, vocab, itos, stoi = download_and_prepare_data(
+        
+        # 检查模型配置，确保使用相同的分词器
+        use_bpe = data_config.get('use_bpe_tokenizer', False)  # 默认false确保兼容性
+        print(f"🔤 使用分词器类型: {'BPE' if use_bpe else '字符级'}")
+        
+        # 创建数据处理器以便正确解码
+        tokenizer_type = "chinese_bpe" if use_bpe else "char_level"
+        vocab_path = data_config.get('vocab_cache_path', 'chinese_tokenizer_vocab.json') if use_bpe else None
+        data_processor = DataProcessor(tokenizer_type=tokenizer_type, vocab_path=vocab_path)
+        
+        dataset, vocab, itos, stoi = data_processor.download_and_prepare_data(
             data_file=data_config.get('data_file', 'xiyouji.txt'),
             force_download=data_config.get('force_download', False)
         )
 
+        # 检查词表大小是否匹配
+        model_vocab_size = config.get('vocab_size', 0)
+        data_vocab_size = len(vocab)
+        print(f"📊 模型词表大小: {model_vocab_size}")
+        print(f"📊 数据词表大小: {data_vocab_size}")
+        
+        if model_vocab_size != data_vocab_size:
+            print(f"⚠️ 警告: 词表大小不匹配! 模型={model_vocab_size}, 数据={data_vocab_size}")
+            print("这可能会导致解码错误，请检查模型训练时使用的分词器类型")
+        
         # 进行推理
         print("开始推理...")
         print(f"📂 使用配置文件: {config_path}")
@@ -299,7 +340,8 @@ def run_inference_demo(config_path="config/config.yaml"):
                 max_new_tokens=config_item['max_tokens'],
                 temperature=config_item['temperature'],
                 top_k=config_item['top_k'],
-                top_p=config_item['top_p']
+                top_p=config_item['top_p'],
+                data_processor=data_processor
             )
             print("生成结果:")
             for i, text in enumerate(output):
