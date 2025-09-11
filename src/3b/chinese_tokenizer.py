@@ -288,12 +288,38 @@ class ChineseTokenizer:
         except Exception as e:
             print(f"❌ 加载词汇表失败: {e}")
             return False
+    
+    def train_on_text(self, text: str):
+        """
+        在文本上训练分词器
+        
+        Args:
+            text: 训练文本
+            
+        Note:
+            基于tiktoken的分词器已经预训练，此方法用于兼容性，
+            主要用于统计更新和词汇表优化
+        """
+        if not text:
+            return
+            
+        # 更新统计信息
+        tokens = self.encode(text)
+        self._update_stats(text, tokens)
+        
+        # 可以在这里添加更多的优化逻辑
+        # 比如收集高频中文词汇用于扩展词汇表
+        print(f"📊 处理文本: {len(text):,} 字符 -> {len(tokens):,} tokens")
 
 
-def create_chinese_tokenizer() -> ChineseTokenizer:
-    """创建中文优化分词器实例"""
+def create_chinese_tokenizer(vocab_size: Optional[int] = None) -> ChineseTokenizer:
+    """创建中文优化分词器实例
+    
+    Args:
+        vocab_size: 自定义词汇表大小，None表示使用原始大小
+    """
     print("🚀 初始化中文优化分词器...")
-    tokenizer = ChineseTokenizer()
+    tokenizer = ChineseTokenizer(vocab_size=vocab_size)
     return tokenizer
 
 

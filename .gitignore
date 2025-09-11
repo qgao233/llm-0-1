@@ -1,3 +1,5 @@
-/src/model_save
-/src/xiyouji.txt
-/src/__pycache__
+model_save/
+xiyouji.txt
+__pycache__/
+logs/
+data/

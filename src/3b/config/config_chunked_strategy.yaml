@@ -1,0 +1,152 @@
+# 3B LLM 分块训练策略配置文件
+# 专门为分块训练策略优化的配置
+
+# 分块训练策略配置
+chunked_training:
+  chunk_size: 10                    # 每块样本数量
+  epochs_per_chunk: 5               # 每块训练轮数
+  save_interval: 1000               # 每1000轮保存checkpoint
+  auto_calculate_steps: true        # 自动计算总训练步数
+  target_multiplier: 1000           # 目标倍数：如果有20w样本，乘以1000得到100万轮
+  enable_cycle_logging: true        # 启用周期日志记录
+  
+# 训练相关配置
+training:
+  batch_size: 8                     # 减小批次大小以适应分块训练
+  gradient_accumulation_steps: 2    # 梯度累积步数
+  epochs: 1                         # 这个参数在分块训练中不使用
+  log_interval: 100                 # 日志间隔
+  save_interval: 1000               # 模型保存间隔（与分块策略保持一致）
+  eval_interval: 500                # 评估间隔
+  
+# 模型架构配置 - 3B参数设计
+model:
+  context_window: 1024              # 上下文窗口
+  vocab_size: 100454                # 词汇表大小
+  d_model: 2560                     # 隐藏维度
+  n_heads: 20                       # 注意力头数
+  n_layers: 26                      # 层数
+  ffn_dim: 10240                    # FFN维度
+  dropout: 0.1                      # Dropout率
+  use_flash_attention: true         # 启用Flash Attention
+  use_gradient_checkpointing: true  # 启用梯度检查点
+
+# 数据配置
+data:
+  # 支持多个数据文件，用逗号分隔
+  force_download: false
+  use_bpe_tokenizer: true           # 使用BPE分词器
+  vocab_cache_path: "chinese_tokenizer_vocab_100k.json"
+  max_seq_length: 1024              # 最大序列长度
+  dynamic_vocab_size: true          # 允许动态调整词汇表大小
+  use_data_collectors: true         # 启用数据收集器系统
+
+# 数据收集器配置
+data_collectors:
+  # 对话数据收集器
+  conversation:
+    enabled: true
+    data_sources:
+      - "data/train_2M_CN_split/train_2M_CN_part_01.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_02.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_03.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_04.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_05.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_06.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_07.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_08.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_09.jsonl"
+      # - "data/train_2M_CN_split/train_2M_CN_part_10.jsonl"
+    shuffle: true
+    
+  # 长文本数据收集器（可选）
+  long_text:
+    enabled: false
+    data_sources:
+      - "data/long_text_corpus.txt"
+    shuffle: true
+    
+  # 代码数据收集器（可选）
+  code:
+    enabled: false
+    data_sources:
+      - "data/code_samples.json"
+    shuffle: true
+  
+  # 采样权重配置
+  weights:
+    conversation: 1.0               # 主要使用对话数据
+    long_text: 0.0                  # 暂时不使用长文本
+    code: 0.0                       # 暂时不使用代码数据
+  
+# 设备配置
+device:
+  force_cpu: false
+  multi_gpu: true                   # 启用多GPU训练
+  preferred_gpus: []
+  mixed_precision: true             # 启用混合精度训练
+  compile_model: false              # 分块训练时建议关闭模型编译
+  
+# 优化器配置
+optimizer:
+  type: "AdamW"
+  lr: 0.0001                        # 学习率
+  betas: [0.9, 0.95]
+  weight_decay: 0.1                 # 权重衰减
+  eps: 1e-8
+  max_grad_norm: 1.0                # 梯度裁剪
+
+# 学习率调度器配置（分块训练中可选）
+scheduler:
+  enabled: false                    # 分块训练中建议关闭调度器
+  type: "cosine"
+  warmup_steps: 1000
+  min_lr: 1e-6
+  plateau_patience: 20
+  plateau_factor: 0.5
+
+# 推理配置
+inference:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_k: 50
+  top_p: 0.9
+  enable_warmup: true
+  use_kv_cache: true
+  
+# 聊天配置
+chat:
+  max_tokens: 512
+  stream_mode: true
+  context_length: 10
+  stream_delay: 0.02
+
+# 内存优化配置
+memory:
+  offload_to_cpu: false
+  pin_memory: false                 # 分块训练中建议关闭
+  num_workers: 0                    # 分块训练中使用单进程
+  cleanup_interval: 10              # 内存清理间隔
+  memory_monitor_interval: 5        # 内存监控间隔
+  aggressive_cleanup: true          # 启用激进内存清理
+  force_float16_model: false        # 使用混合精度而不是强制float16
+
+# 监控和日志配置
+monitoring:
+  wandb_enabled: false              # 可选：启用Weights & Biases监控
+  tensorboard_enabled: true         # 启用TensorBoard
+  log_dir: "logs/chunked_strategy"  # 日志目录
+  
+# 检查点配置 - 分块训练专用
+checkpoint:
+  save_dir: "model_save_chunked"    # 分块训练模型保存目录
+  keep_last_n: 1                   # 只保留最新的1个检查点
+  save_optimizer: true              # 保存优化器状态
+  auto_resume: true                 # 自动恢复训练
+  
+# 分块训练监控配置
+chunk_monitoring:
+  log_chunk_progress: true          # 记录块训练进度
+  log_cycle_summary: true           # 记录周期总结
+  save_chunk_stats: true            # 保存块统计信息
+  chunk_stats_file: "logs/chunk_stats.json"  # 块统计文件路径
