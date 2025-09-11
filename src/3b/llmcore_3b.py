@@ -173,10 +173,24 @@ class RoPEMaskedAttentionHead(nn.Module):
         scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         
         # 应用因果掩码
-        mask_len = scores.shape[-1]
-        scores = scores.masked_fill(
-            self.mask[:, :, :seq_len, :mask_len] == 0, float('-inf')
-        )
+        key_len = scores.shape[-1]  # k的序列长度
+        query_len = scores.shape[-2]  # q的序列长度
+        
+        # 为KV缓存创建动态掩码
+        if use_kv_cache and past_kv is not None:
+            # 在KV缓存场景中，只需要掩盖未来的位置
+            # 当前查询位置相对于整个序列的位置
+            current_pos = key_len - query_len
+            mask = torch.tril(torch.ones(query_len, key_len, device=scores.device))
+            # 调整掩码以允许当前位置看到历史位置
+            for i in range(query_len):
+                mask[i, :current_pos + i + 1] = 1
+            mask = mask.view(1, 1, query_len, key_len)
+        else:
+            # 正常情况：使用预先计算的掩码
+            mask = self.mask[:, :, :query_len, :key_len]
+        
+        scores = scores.masked_fill(mask == 0, float('-inf'))
         
         # 应用softmax
         attn_weights = F.softmax(scores, dim=-1)
@@ -203,7 +217,7 @@ class MultiHeadAttention(nn.Module):
         self.linear = nn.Linear(config['n_heads'] * head_dim, config['d_model'])
 
     def forward(self, x, use_kv_cache=False, past_kvs=None):
-        if use_kv_cache and past_kvs is not None:
+        if use_kv_cache:
             head_outputs = []
             new_kvs = []
             for i, head in enumerate(self.heads):

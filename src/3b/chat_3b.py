@@ -18,7 +18,7 @@ from infer_3b import LLMInference3B, sample_next_token
 class ChatBot3B:
     """3B模型聊天机器人"""
     
-    def __init__(self, model_dir="model_save_3b", config_path="config/config.yaml"):
+    def __init__(self, model_dir="model_save_chunked", config_path="config/config_chunked_strategy.yaml"):
         """初始化3B聊天机器人"""
         self.model_dir = model_dir
         self.config_path = config_path
@@ -368,14 +368,26 @@ class ChatBot3B:
 
 def main():
     """主函数"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='3B LLM聊天机器人')
+    parser.add_argument('--model-dir', default='model_save_chunked', help='模型保存目录')
+    parser.add_argument('--config', default='config/config_chunked_strategy.yaml', help='配置文件路径')
+    
+    args = parser.parse_args()
+    
     print("🚀 启动通用对话小聊天助手...")
+    print(f"📁 模型目录: {args.model_dir}")
+    print(f"⚙️ 配置文件: {args.config}")
     
     try:
-        chatbot = ChatBot3B()
+        chatbot = ChatBot3B(args.model_dir, args.config)
         chatbot.chat()
     except Exception as e:
         print(f"❌ 启动失败: {e}")
-        print("💡 请确保已经训练了3B模型并保存在 ./model_save_3b/ 目录下")
+        print(f"💡 请确保已经训练了3B模型并保存在 ./{args.model_dir}/ 目录下")
+        print("💡 或者使用不同的参数:")
+        print("   python chat_3b.py --model-dir model_save_3b --config config/config.yaml")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 from llmcore_3b import create_3b_model, get_device
-from data_processor import DataProcessor
+from data_collectors import DataProcessor
 
 
 def sample_next_token(logits: torch.Tensor, temperature: float = 1.0, 
@@ -55,7 +55,7 @@ def sample_next_token(logits: torch.Tensor, temperature: float = 1.0,
 class LLMInference3B:
     """3B模型推理器"""
     
-    def __init__(self, model_dir: str = "model_save_3b", config_path: str = "config/config.yaml"):
+    def __init__(self, model_dir: str = "model_save_chunked", config_path: str = "config/config_chunked_strategy.yaml"):
         self.model_dir = Path(model_dir)
         self.config_path = config_path
         self.model = None
@@ -160,8 +160,6 @@ class LLMInference3B:
         data_config = self.config['data']
         tokenizer_type = "chinese_bpe" if data_config.get('use_bpe_tokenizer', True) else "char_level"
         vocab_path = data_config.get('vocab_cache_path', 'chinese_tokenizer_vocab_50k.json')
-        
-        from data_collectors import DataProcessor
         
         self.data_processor = DataProcessor(
             tokenizer_type=tokenizer_type,
