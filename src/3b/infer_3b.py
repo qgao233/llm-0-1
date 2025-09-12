@@ -116,7 +116,34 @@ class LLMInference3B:
         
         # 加载检查点
         try:
-            checkpoint = torch.load(best_model_path, map_location=self.device)
+            # 为了兼容PyTorch 2.6的安全机制，添加安全的全局变量
+            import torch.serialization
+            safe_globals = [
+                'numpy.core.multiarray.scalar',
+                'numpy.dtype',
+                'numpy.ndarray',
+                'collections.OrderedDict',
+                'torch._utils._rebuild_tensor_v2',
+                'torch._utils._rebuild_parameter',
+                'torch.nn.parameter.Parameter',
+                'builtins.dict',
+                'builtins.list',
+                'builtins.tuple',
+                'builtins.int',
+                'builtins.float',
+                'builtins.str',
+                'builtins.bool'
+            ]
+            
+            # 使用安全的全局变量上下文管理器
+            try:
+                with torch.serialization.safe_globals(safe_globals):
+                    checkpoint = torch.load(best_model_path, map_location=self.device, weights_only=True)
+            except Exception as safe_load_error:
+                print(f"⚠️ 安全加载失败，尝试传统加载方式: {safe_load_error}")
+                # 回退到传统加载方式（不推荐，但为了兼容性）
+                checkpoint = torch.load(best_model_path, map_location=self.device, weights_only=False)
+                print("⚠️ 使用了不安全的加载方式，请确保模型文件来源可信")
             
             # 获取模型配置
             if 'config' in checkpoint:

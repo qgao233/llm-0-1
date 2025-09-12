@@ -48,15 +48,15 @@ data_collectors:
     enabled: true
     data_sources:
       - "data/train_2M_CN_split/train_2M_CN_part_01.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_02.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_03.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_04.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_05.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_06.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_07.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_08.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_09.jsonl"
-      # - "data/train_2M_CN_split/train_2M_CN_part_10.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_02.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_03.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_04.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_05.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_06.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_07.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_08.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_09.jsonl"
+      - "data/train_2M_CN_split/train_2M_CN_part_10.jsonl"
     shuffle: true
     
   # 长文本数据收集器（可选）
