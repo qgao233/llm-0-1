@@ -25,7 +25,7 @@ import numpy as np
 from tqdm import tqdm
 import logging
 from datetime import datetime
-from llmcore_3b import create_3b_model, get_device
+from llmcore import create_model, get_device
 from data_collectors import create_data_collectors, MixedDataset, DataProcessor
 
 # 确保日志目录存在
@@ -36,7 +36,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/train_chunked_strategy.log'),
+        logging.FileHandler('logs/train.log'),
         logging.StreamHandler()
     ]
 )
@@ -234,7 +234,7 @@ class ChunkedTrainingStrategy:
         model_config = self.config['model']
         
         with torch.device(self.device):
-            self.model = create_3b_model(model_config)
+            self.model = create_model(model_config)
         
         # 移动到设备
         self.model = self.model.to(self.device)
@@ -442,6 +442,9 @@ class ChunkedTrainingStrategy:
         
         chunk_losses = []
         
+        # 如果batch_size = 8，一块有10个样本，10/8=1.25，跑2次迭代，第2次剩2个样本
+
+        # 每块训练多少轮，没有意义，因为这块样本训练第一轮的时候就已经全部训练过了，再重复4轮也没有意义，一定要是多轮次，一轮训练所有样本
         # 训练指定轮数
         for epoch in range(self.epochs_per_chunk):
             epoch_loss = 0
@@ -634,7 +637,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='3B LLM分块训练策略脚本')
-    parser.add_argument('--config', default='config/config_chunked_strategy.yaml', help='配置文件路径')
+    parser.add_argument('--config', default='config/config.yaml', help='配置文件路径')
     parser.add_argument('--chunk-size', type=int, default=10, help='每块样本数量')
     parser.add_argument('--epochs-per-chunk', type=int, default=5, help='每块训练轮数')
     parser.add_argument('--save-interval', type=int, default=1000, help='保存间隔')

@@ -1,0 +1,136 @@
+# 0.1B 参数 LLM 模型配置文件
+# 目标参数量: 约85-100M (0.085-0.1B)
+# 适用于消费级GPU训练和推理
+
+model:
+  # 基础架构参数
+  d_model: 768                    # 隐藏层维度 (hidden_size)
+  n_layers: 10                    # Transformer层数 (num_hidden_layers)
+  n_heads: 12                     # 多头注意力头数 (num_attention_heads)
+  ffn_dim: 3072                   # 前馈网络维度 (intermediate_size) = d_model * 4
+  
+  # 词表和序列长度
+  # vocab_size: 由分词器自动计算，不需要手动配置
+  context_window: 2048            # 最大序列长度
+  
+  # 正则化和优化
+  dropout: 0.1                    # Dropout概率
+  tie_weights: true               # 是否共享embedding和lm_head权重
+  
+  # 位置编码
+  max_position_embeddings: 2048   # 最大位置编码长度
+  
+# 训练配置
+training:
+  # 基础训练参数
+  batch_size: 10                   # 训练批次大小
+  learning_rate: 5e-4             # 学习率
+  weight_decay: 0.01              # 权重衰减
+  warmup_steps: 1000              # 预热步数
+  max_steps: 50000                # 最大训练步数
+  
+  # 预训练轮数设置
+  num_epochs: 3                   # 预训练总轮数（建议2-3轮）
+  
+  # 分片设置
+  shards_per_epoch: 5             # 每轮分片数，用于定期保存checkpoint
+  
+  # 优化器配置
+  optimizer: "adamw"              # 优化器类型
+  beta1: 0.9                      # Adam beta1
+  beta2: 0.95                     # Adam beta2
+  eps: 1e-8                       # Adam epsilon
+  
+  # 学习率调度
+  lr_scheduler: "cosine"          # 学习率调度器
+  min_lr_ratio: 0.1               # 最小学习率比例
+  
+  # 梯度相关
+  gradient_clip_val: 1.0          # 梯度裁剪
+  accumulate_grad_batches: 4      # 梯度累积批次
+  
+  # 混合精度训练
+  use_amp: true                   # 启用自动混合精度
+  
+# 推理配置
+inference:
+  # 模型路径（如果不指定，则使用checkpoint.save_dir）
+  model_dir: "/mnt/workspace/qgao2/src/0_1b/pretrain/checkpoints/0_1b/pretrain_20250912_153852"  # 可选，推理时的模型目录
+  
+  # 生成参数
+  max_new_tokens: 512             # 最大生成token数
+  temperature: 0.8                # 采样温度
+  top_k: 50                       # Top-K采样
+  top_p: 0.9                      # Top-P采样
+  do_sample: true                 # 是否采样
+  
+  # 缓存优化
+  use_kv_cache: true              # 启用KV缓存
+  
+# 数据配置
+data:
+  # 数据处理配置
+  max_seq_length: 2048            # 最大序列长度
+  pad_token_id: 0                 # 填充token ID
+  eos_token_id: 2                 # 结束token ID
+  
+  # 分词器配置
+  use_bpe_tokenizer: true         # 是否使用BPE分词器
+  vocab_cache_path: "/mnt/workspace/qgao2/src/0_1b/pretrain/chinese_tokenizer_vocab_25k.json"  # 词汇表缓存路径（相对于工作目录）
+
+# 数据收集器配置 - 所有数据源都在这里配置
+data_collectors:
+  # 对话数据收集器（主要训练数据）
+  conversation:
+    enabled: true
+    shuffle: true
+    data_sources:
+      - "/mnt/workspace/qgao2/src/0_1b/data/train_2M_CN_split/train_2M_CN_part_00_100.jsonl"
+      # 可以添加更多对话数据文件
+  
+  # 长文本数据收集器（可选，用于长文本预训练）
+  long_text:
+    enabled: false
+    shuffle: true
+    data_sources:
+      # 示例：可以添加小说、文章等长文本数据
+      # - "data/long_text/novels.txt"
+      # - "data/long_text/articles.txt"
+  
+  # 代码数据收集器（可选，用于代码理解能力）
+  code:
+    enabled: false
+    shuffle: true
+    data_sources:
+      # 示例：可以添加Python代码数据
+      # - "data/code/python_code.jsonl"
+      # - "data/code/code_examples.py"
+  
+# 检查点和日志
+checkpoint:
+  save_dir: "/mnt/workspace/qgao2/src/0_1b/pretrain/checkpoints/0_1b"    # 检查点保存目录
+  keep_last_n_checkpoints: 1      # 保留检查点数量
+  
+logging:
+  log_dir: "/mnt/workspace/qgao2/src/0_1b/pretrain/logs/0_1b"            # 日志目录
+  log_every_n_steps: 100          # 日志记录频率
+  
+# 硬件配置
+hardware:
+  # GPU设置
+  device: "auto"                  # 自动检测设备
+  multi_gpu: false                # 是否使用多GPU
+  
+  # 内存优化
+  gradient_checkpointing: true    # 梯度检查点
+  dataloader_num_workers: 4       # 数据加载器工作进程数
+  pin_memory: true                # 固定内存
+
+# 模型估算信息
+# 参数量计算 (vocab_size由分词器动态确定):
+# - Embedding: vocab_size * d_model 
+# - Transformer Blocks: n_layers * (3 * d_model^2 + 2 * d_model * ffn_dim)
+#   示例: 10 * (3 * 768^2 + 2 * 768 * 3072) ≈ 51.6M
+# - Output Head: 如果tie_weights=true则共享embedding权重，否则额外 vocab_size * d_model
+# - 总计: 约(51.6M + vocab_size * d_model)参数 (tie_weights=true)
+#   或 约(51.6M + 2 * vocab_size * d_model)参数 (tie_weights=false)

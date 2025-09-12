@@ -409,7 +409,7 @@ class Llmpvq3B(nn.Module):
         return idx
 
 
-def create_3b_model(config):
+def create_model(config):
     """创建3B模型实例"""
     return Llmpvq3B(config)
 
@@ -428,7 +428,7 @@ if __name__ == "__main__":
     }
     
     print("🚀 创建3B模型...")
-    model = create_3b_model(config)
+    model = create_model(config)
     
     # 测试前向传播
     batch_size, seq_len = 2, 512

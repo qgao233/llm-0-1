@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import numpy as np
-from llmcore_3b import create_3b_model, get_device
+from llmcore import create_model, get_device
 from data_collectors import DataProcessor
 
 
@@ -55,7 +55,7 @@ def sample_next_token(logits: torch.Tensor, temperature: float = 1.0,
 class LLMInference3B:
     """3B模型推理器"""
     
-    def __init__(self, model_dir: str = "model_save_chunked", config_path: str = "config/config_chunked_strategy.yaml"):
+    def __init__(self, model_dir: str = "model_save", config_path: str = "config/config.yaml"):
         self.model_dir = Path(model_dir)
         self.config_path = config_path
         self.model = None
@@ -152,7 +152,7 @@ class LLMInference3B:
                 model_config = self.config['model']
             
             # 创建模型
-            self.model = create_3b_model(model_config)
+            self.model = create_model(model_config)
             
             # 加载权重
             if 'model_state_dict' in checkpoint:

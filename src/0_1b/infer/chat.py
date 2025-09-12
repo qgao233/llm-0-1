@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-3B参数LLM模型交互式聊天脚本
+0.1B参数LLM模型交互式聊天脚本
 支持流式输出、对话历史、参数调整等功能
+专为消费级硬件优化
 """
 
 import torch
@@ -12,20 +13,21 @@ import json
 from typing import List, Dict
 from pathlib import Path
 
-from infer_3b import LLMInference3B, sample_next_token
+from infer import LLMInference, sample_next_token
 
 
-class ChatBot3B:
-    """3B模型聊天机器人"""
+class ChatBot:
+    """0.1B模型聊天机器人"""
     
-    def __init__(self, model_dir="model_save_chunked", config_path="config/config_chunked_strategy.yaml"):
-        """初始化3B聊天机器人"""
+    def __init__(self, model_dir=None, 
+                 config_path="pretrain/config/config.yaml"):
+        """初始化0.1B聊天机器人"""
         self.model_dir = model_dir
         self.config_path = config_path
         self.conversation_history = []
         
         # 加载模型和配置
-        print("🚀 正在加载3B模型...")
+        print("🚀 正在加载0.1B模型...")
         self._load_model()
         
     def _load_model(self):
@@ -36,21 +38,22 @@ class ChatBot3B:
             enable_warmup = warmup_choice != 'n'
             
             # 创建推理器
-            self.inference = LLMInference3B(self.model_dir, self.config_path)
+            self.inference = LLMInference(self.model_dir, self.config_path)
             
             # 预热模型
             if enable_warmup:
                 self._warmup_model()
             
-            print("✅ 3B模型加载完成")
+            print("✅ 0.1B模型加载完成")
             
         except Exception as e:
             print(f"❌ 模型加载失败: {e}")
+            print("💡 请确保已经训练了0.1B模型并保存在相应目录下")
             sys.exit(1)
     
     def _warmup_model(self):
         """预热模型"""
-        print("🔥 预热3B模型中...")
+        print("🔥 预热0.1B模型中...")
         dummy_prompt = "测试"
         
         start_time = time.time()
@@ -64,10 +67,10 @@ class ChatBot3B:
         
         print(f"✅ 模型预热完成，用时: {warmup_time:.2f}秒")
     
-    def generate_response(self, prompt: str, max_tokens: int = 512, 
-                         temperature: float = 0.7, top_k: int = 50, top_p: float = 0.9,
+    def generate_response(self, prompt: str, max_tokens: int = 256, 
+                         temperature: float = 0.8, top_k: int = 40, top_p: float = 0.9,
                          use_kv_cache: bool = True, show_progress: bool = False, 
-                         stream_delay: float = 0.02) -> str:
+                         stream_delay: float = 0.03) -> str:
         """生成回复"""
         try:
             # 生成完整回复
@@ -91,7 +94,7 @@ class ChatBot3B:
             print(f"❌ 生成回复时发生错误: {e}")
             return "抱歉，我现在无法回答这个问题。"
     
-    def _fake_stream_output(self, text: str, delay: float = 0.02):
+    def _fake_stream_output(self, text: str, delay: float = 0.03):
         """假的流式输出效果"""
         print("🤖 助手: ", end="", flush=True)
         
@@ -109,16 +112,16 @@ class ChatBot3B:
             'timestamp': time.time()
         })
         
-        # 保持历史记录不超过15轮对话（3B模型可以处理更长的上下文）
-        if len(self.conversation_history) > 15:
+        # 保持历史记录不超过8轮对话（0.1B模型内存限制）
+        if len(self.conversation_history) > 8:
             self.conversation_history.pop(0)
     
     def get_context_prompt(self, current_input: str) -> str:
         """构建包含历史对话的提示"""
         context_parts = []
         
-        # 添加最近几轮对话作为上下文（3B模型可以处理更多历史）
-        for item in self.conversation_history[-5:]:  # 最多5轮历史
+        # 添加最近几轮对话作为上下文（0.1B模型处理较短上下文）
+        for item in self.conversation_history[-3:]:  # 最多3轮历史
             context_parts.append(f"用户：{item['user']}")
             context_parts.append(f"助手：{item['bot']}")
         
@@ -132,7 +135,7 @@ class ChatBot3B:
         """开始聊天循环"""
         print("\n" + "="*70)
         print("🤖 通用对话小助手已启动！")
-        print("💡 这是一个30亿参数的大模型，具有更强的理解和生成能力")
+        print("💡 这是一个0.1亿参数的大模型，适合轻量级对话")
         print("📚 您可以和我聊天，我会回复您")
         print("📝 输入 'quit'、'exit' 或 'bye' 退出")
         print("🎛️ 输入 'settings' 查看和修改生成参数")
@@ -143,14 +146,14 @@ class ChatBot3B:
         print("📊 输入 'stats' 查看模型统计信息")
         print("="*70)
         
-        # 默认生成参数 - 3B模型优化
+        # 默认生成参数 - 0.1B模型优化
         settings = {
-            'max_tokens': 512,      # 增加最大生成长度
-            'temperature': 0.7,     # 稍微降低温度以提高质量
-            'top_k': 50,
+            'max_tokens': 256,      # 适中的生成长度
+            'temperature': 0.8,     # 适中的随机性
+            'top_k': 40,           # 较少的候选词数量
             'top_p': 0.9,
             'use_kv_cache': True,   # 启用KV缓存以提高效率
-            'stream_delay': 0.02    # 流式输出延迟
+            'stream_delay': 0.03    # 稍慢的流式输出延迟
         }
         
         # 流式输出模式
@@ -205,7 +208,7 @@ class ChatBot3B:
                 context_prompt = self.get_context_prompt(user_input)
                 
                 # 显示思考中提示
-                thinking_text = "🤔 3B模型思考中..."
+                thinking_text = "🤔 0.1B模型思考中..."
                 print(thinking_text, end="", flush=True)
                 
                 # 生成回复
@@ -262,7 +265,7 @@ class ChatBot3B:
             print(f"  {key}: {value}")
         
         print("\n💡 参数说明:")
-        print("  max_tokens: 最大生成长度 (50-1024)")
+        print("  max_tokens: 最大生成长度 (50-512)")
         print("  temperature: 随机性 (0.1-2.0, 越小越保守)")
         print("  top_k: 候选词数量 (1-100, 0表示不限制)")
         print("  top_p: 累积概率阈值 (0.1-1.0)")
@@ -281,7 +284,7 @@ class ChatBot3B:
                         new_value = input(f"  {key} (当前: {settings[key]}): ").strip()
                         if new_value:
                             if key == 'max_tokens':
-                                settings[key] = max(50, min(1024, int(new_value)))
+                                settings[key] = max(50, min(512, int(new_value)))
                             elif key == 'temperature':
                                 settings[key] = max(0.1, min(2.0, float(new_value)))
                             elif key == 'top_k':
@@ -315,7 +318,7 @@ class ChatBot3B:
             return
         
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"conversation_3b_{timestamp}.json"
+        filename = f"conversation_0_1b_{timestamp}.json"
         
         try:
             with open(filename, 'w', encoding='utf-8') as f:
@@ -326,28 +329,29 @@ class ChatBot3B:
     
     def _show_model_stats(self):
         """显示模型统计信息"""
-        print("\n📊 3B模型统计信息:")
+        print("\n📊 0.1B模型统计信息:")
         
         # 模型参数信息
         total_params = sum(p.numel() for p in self.inference.model.parameters())
         trainable_params = sum(p.numel() for p in self.inference.model.parameters() if p.requires_grad)
         
         print(f"  🏗️  模型架构:")
-        print(f"    - 总参数量: {total_params:,} ({total_params/1e9:.2f}B)")
-        print(f"    - 可训练参数: {trainable_params:,} ({trainable_params/1e9:.2f}B)")
+        print(f"    - 总参数量: {total_params:,} ({total_params/1e6:.1f}M)")
+        print(f"    - 可训练参数: {trainable_params:,} ({trainable_params/1e6:.1f}M)")
         print(f"    - 隐藏维度: {self.inference.config['model']['d_model']}")
         print(f"    - 注意力头数: {self.inference.config['model']['n_heads']}")
         print(f"    - 层数: {self.inference.config['model']['n_layers']}")
         print(f"    - 上下文窗口: {self.inference.config['model']['context_window']}")
-        print(f"    - 词汇表大小: {self.inference.config['model']['vocab_size']:,}")
+        print(f"    - 词汇表大小: {self.inference.config['model'].get('vocab_size', 'Dynamic')}")
         
         # 设备信息
         print(f"  🎯 运行环境:")
         print(f"    - 设备: {self.inference.device}")
         if self.inference.device.type == 'cuda':
-            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
-            gpu_name = torch.cuda.get_device_name(0)
-            print(f"    - GPU: {gpu_name} ({gpu_memory:.1f} GB)")
+            if torch.cuda.is_available():
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                gpu_name = torch.cuda.get_device_name(0)
+                print(f"    - GPU: {gpu_name} ({gpu_memory:.1f} GB)")
         
         # 对话统计
         print(f"  💬 对话统计:")
@@ -370,24 +374,28 @@ def main():
     """主函数"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='3B LLM聊天机器人')
-    parser.add_argument('--model-dir', default='model_save_chunked', help='模型保存目录')
-    parser.add_argument('--config', default='config/config_chunked_strategy.yaml', help='配置文件路径')
+    parser = argparse.ArgumentParser(description='0.1B LLM聊天机器人')
+    parser.add_argument('--model-dir', default=None, help='模型保存目录（不指定时从配置文件读取）')
+    parser.add_argument('--config', default='pretrain/config/config.yaml', help='配置文件路径')
     
     args = parser.parse_args()
     
     print("🚀 启动通用对话小聊天助手...")
-    print(f"📁 模型目录: {args.model_dir}")
+    if args.model_dir:
+        print(f"📁 模型目录: {args.model_dir}")
+    else:
+        print("📁 模型目录: 从配置文件读取")
     print(f"⚙️ 配置文件: {args.config}")
     
     try:
-        chatbot = ChatBot3B(args.model_dir, args.config)
+        chatbot = ChatBot(args.model_dir, args.config)
         chatbot.chat()
     except Exception as e:
         print(f"❌ 启动失败: {e}")
-        print(f"💡 请确保已经训练了3B模型并保存在 ./{args.model_dir}/ 目录下")
+        print("💡 请确保已经训练了0.1B模型并保存在相应目录下")
         print("💡 或者使用不同的参数:")
-        print("   python chat_3b.py --model-dir model_save_3b --config config/config.yaml")
+        print("   python chat.py --model-dir /path/to/model --config pretrain/config/config.yaml")
+        print("   python chat.py --config pretrain/config/config.yaml  # 从配置文件读取模型目录")
 
 
 if __name__ == "__main__":
